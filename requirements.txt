@@ -1,5 +1,8 @@
-boto3
-opencv-python
-numpy
-Pillow
-moviepy
+# Clone-and-run setup. Installs PyFrame (editable) with every backend, so the
+# package imports and `python main.py <file>` works straight from a git clone:
+#
+#   pip install -r requirements.txt
+#   python main.py path/to.gif
+#
+# Swap [all] for [local] if you only want the free local backend (no boto3/moviepy).
+-e .[all]

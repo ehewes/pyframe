@@ -1,102 +1,129 @@
 # PyFrame
 
-GIF and Image moderation using [AWS Rekognition](https://aws.amazon.com/rekognition/content-moderation/) or local [HuggingFace](https://huggingface.co) models.
+NSFW moderation for GIFs, videos, and images using local [HuggingFace](https://huggingface.co) models and/or [AWS Rekognition](https://aws.amazon.com/rekognition/content-moderation/).
 
-## About
-PyFrame utilizes Temporal Segmentation to optimize moderation. Instead of processing every frame, the system divides the animation into equal time windows ("buckets") and calculates the inter-frame difference for each frame. It then applies motion-based keyframe selection to extract the single most significant frame from each bucket. This guarantees diverse scene coverage and captures peak motion events across the entire GIF. Supports both AWS Rekognition and local HuggingFace models for classification.
+PyFrame uses **temporal segmentation** to avoid moderating every frame: it splits an animation into equal time buckets and extracts the most significant frame from each, capturing diverse scene coverage at a fraction of the cost. It also offers an optional **two-stage cascade** (`--prescreen`): a free local model soft-screens densely, and only the flagged time windows get escalated to the precise (e.g. AWS) backend. See the [pipeline diagram](#pipeline) for a visual of the approach.
 
-### AWS Rekognition Pricing Model
-AWS Rekognition charges $1.00 per 1,000 images processed. A typical 5-second GIF (150 frames at 30 FPS) costs $0.15 to moderate when processing every frame, making comprehensive moderation expensive at scale.
+## Install
 
-### PyFrame's Bucketed Approach
-PyFrame analyzes the same 150 frame GIF using just 10 intelligently selected frames, reducing the cost to $0.01 per GIF a 93% savings while maintaining detection accuracy. Alternatively, run the same frame extraction with a local HuggingFace model for zero cost (less accuracy than AWS) but can utilise a two pass approach optionally.
-
----
-## Setup
-
-1. Install dependencies:
 ```bash
-pip install -r requirements.txt
+pip install "pyframe-gif-moderation[local]"   # free local HuggingFace backend
+pip install "pyframe-gif-moderation[aws]"      # AWS Rekognition backend
+pip install "pyframe-gif-moderation[all]"      # everything (local + aws + video)
 ```
 
-2. Install AWS CLI (if not already installed):
+Or with [uv](https://docs.astral.sh/uv/):
+
 ```bash
-brew install awscli
+uv add "pyframe-gif-moderation[local]"
+# or, ad-hoc:  uv pip install "pyframe-gif-moderation[local]"
 ```
 
-3. Configure AWS credentials:
-```bash
-aws configure
-```
+The base install is intentionally light (just `opencv-python-headless`, `numpy`, `Pillow`); the heavy backends (`boto3`, `transformers`/`torch`, `moviepy`) are optional extras you only pull in if you use them.
 
-## Usage
+## Python API
 
-Extract key frames from a GIF and moderate them:
+`Pipe` is the high-level facade: build it, call `run()`.
+
 ```python
-from lib.aws.pipe import Pipe
+from pyframe import Pipe
 
-pipe = Pipe("content/gifs/your-gif.gif", max_frames=10, min_confidence=80.0)
-results = pipe.run()
+result = Pipe("clip.gif", backend="local").run()
+
+print(result.verdict)   # clean
+print(result.is_nsfw)   # False
 ```
+
+Swap the backend, or turn on the two-pass cascade:
+
+```python
+Pipe("clip.gif", backend="aws").run()                  # AWS Rekognition
+Pipe("clip.gif", backend="aws", prescreen=True).run()  # local screens, AWS confirms
+```
+
+### Tuning the two-pass
+
+Every knob is a `Pipe` param with a sensible default:
+
+```python
+Pipe(
+    "clip.gif",
+    backend="aws",            # precise backend used on escalation
+    prescreen=True,           # two-pass cascade on
+    escalate_threshold=0.15,  # escalate on the faintest local signal (lower = more recall, more cost)
+    max_escalations=2,        # hard cap on AWS calls per file
+    frames_per_batch=2,       # frames merged into each grid sent to AWS
+    screen_fps=2.0,           # soft-screen sample rate
+    min_confidence=0.5,       # NSFW threshold (defaults to the backend's recall-safe value)
+).run()
+```
+
+## CLI
+
+The same pipeline as a command, no script to edit:
+
+```bash
+pyframe clip.gif                                   # auto backend, prints a verdict
+pyframe clip.gif --backend local                   # free local model
+pyframe clip.gif --backend aws --region us-east-1  # AWS Rekognition
+pyframe clip.gif --prescreen --backend aws         # cascade: local gate then AWS
+pyframe a.gif b.gif c.png --json                   # batch, machine-readable
+```
+
+Exit code: `0` clean, `1` NSFW (per `--fail-on`), `2` bad input, `3` backend not installed, so it drops straight into a shell gate: `pyframe upload.gif || reject`. Equivalent module form: `python -m pyframe clip.gif`.
 
 ### Options
 
-- `max_frames` - Number of frames to extract (default: 10)
-- `min_confidence` - Minimum detection confidence (default: 80.0)
-- `use_merged` - Merge frames before moderating (default: False)
-- `frames_per_batch` - Frames per merged image (default: 2)
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--backend` | `auto` | `local`, `aws`, or `local:<model-id>` |
+| `--model` | model default | HuggingFace model id (local backend) |
+| `--region` | `us-east-1` | AWS region (aws backend) |
+| `--max-frames` | `10` | frames to extract from a GIF/video |
+| `--min-confidence` | backend default | NSFW threshold (0-1); `0.5` local, `0.8` aws |
+| `--sampler` | `motion` | `motion` (bucketing) or `dense` (uniform) |
+| `--prescreen` | off | enable the two-stage cascade |
+| `--escalate-threshold` | `0.15` | cascade gate (low = recall-safe) |
+| `--max-escalations` | `2` | hard cap on precise (AWS) calls per file |
+| `--screen-fps` | `2.0` | soft-screen sample rate |
+| `--use-merged` / `--frames-per-batch` | off / `2` | merge frames into a grid before classifying |
+| `--save-frames DIR` | off | write the classified frames to `DIR` |
+| `--json` / `--fail-on` | off / `nsfw` | output format / exit-code policy |
 
-## LocalPipe
+## How it works
 
-Bring your own model from HuggingFace instead of using AWS. Runs entirely locally, no API keys or AWS config needed. Defaults to [AdamCodd/vit-base-nsfw-detector](https://huggingface.co/AdamCodd/vit-base-nsfw-detector) but you can pass any HuggingFace image-classification model. Not as accurate as AWS Rekognition but works well as a free alternative, or use both together for a two-pass approach.
+- `Pipe` - facade you construct (mirrors the old main.py flow)
+  - `Scanner` - engine: single-pass, or the two-stage cascade
+    - `Backend` - local (HuggingFace) or aws (Rekognition), normalized results
+    - `Sampler` - motion bucketing, dense uniform, or suspicion
 
-```python
-from lib.local.local_pipe import LocalPipe
+**Single-pass** (default): extract `max_frames` via motion bucketing, then classify each with one backend.
 
-# default model
-pipe = LocalPipe("content/gifs/your-gif.gif", max_frames=10)
-results = pipe.run()
+**Cascade** (`--prescreen`): a free local model densely soft-screens the whole clip; if any frame scores above `--escalate-threshold` (a deliberately *low* recall gate), the most-suspicious frames are merged into grids and sent to the precise backend, capped at `--max-escalations` calls per file (default 2) so a heavily-flagged clip can never cost more than a single-pass scan. Clean media short-circuits to ~$0 and never hits the expensive backend. Because the soft-screen looks at *content* (not motion), it won't discard a unique suspicious frame the way motion bucketing can, and it fails *open*: a decode/inference error escalates rather than silently clearing.
 
-# custom model
-pipe = LocalPipe("content/gifs/your-gif.gif", max_frames=10, model="Falconsai/nsfw_image_detection")
-results = pipe.run()
-```
+## Cost
 
-### Options
+AWS Rekognition bills ~$1.00 / 1,000 images. A 150-frame GIF costs $0.15 to moderate every frame; PyFrame's 10-bucket extraction drops that to ~$0.01 (a ~93% reduction). With `--prescreen`, clean clips cost $0 (local only) and flagged clips incur at most `--max-escalations` AWS calls (default 2), so the cascade never costs more than a single-pass scan.
 
-- `max_frames` - Number of frames to extract (default: 5)
-- `model` - HuggingFace model ID (default: `AdamCodd/vit-base-nsfw-detector`)
-- `use_merged` - Merge frames before classifying (default: False)
-- `frames_per_batch` - Frames per merged image (default: 2)
+> Tune the cascade on labeled data before relying on it: the local gate's recall bounds the system's recall. Keep `--escalate-threshold` low (catch anything *potentially* NSFW) and sample densely enough (`--screen-fps`) that brief events don't fall between samples.
 
-Requires `transformers` and `torch`:
+## Pipeline
+
+A 150-frame GIF flows through temporal segmentation down to a handful of extracted frames, optionally merged into grids, then sent to the backend:
+
+![PyFrame pipeline: GIF frames to temporal buckets to extracted frames to merged grids to AWS Rekognition](https://raw.githubusercontent.com/ehewes/pyframe/main/media/HCBHD36W0AI3Hz4.jpeg)
+
+## Notes
+
+- The `aws` backend needs credentials: install with `pip install "pyframe-gif-moderation[aws]"`, then run `aws configure` (or set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION`).
+- `[video]` (video to GIF) needs `moviepy`, which requires a system **ffmpeg** (`brew install ffmpeg`).
+- HuggingFace **model weights** have their own licenses, separate from this package's MIT license.
+
+## Development
+
 ```bash
-pip install transformers torch
+uv pip install -e ".[dev]"   # or: pip install -e ".[dev]"
+pytest
+python -m build              # or: uv build
+twine check dist/*           # or: uv publish  (to PyPI)
 ```
-
-### Run
-
-```bash
-source .venv/bin/activate && python main.py
-```
-
-## Structure
-
-- `content/` - All input/output files
-- `lib/` - Core functionality
-  - `aws/` - AWS Rekognition pipeline
-    - `pipe.py` - Rekognition pipe
-    - `rekognition_moderator.py` - Rekognition API wrapper
-  - `local/` - Local HuggingFace pipeline
-    - `local_pipe.py` - Local pipe
-    - `local_detector.py` - HuggingFace model wrapper
-  - `frame_processor.py` - Frame extraction
-  - `image_utils.py` - Shared image helpers
-  - `video_converter.py` - Video to GIF conversion
-
-## Table
-| Method | Frames Analyzed per GIF | Cost per GIF | GIFs Moderated | Cost Savings |
-|--------|-------------------------|--------------|----------------|--------------|
-| **Standard Method (All Frames)** | 150 frames | $0.15 | **66 GIFs** | Baseline |
-| **PyFrame (10 Buckets)** | 10 frames | $0.01 | **1,000 GIFs** | **93% reduction** |
-

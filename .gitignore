@@ -1,6 +1,14 @@
 content/
+evals/
 __pycache__/
 *.pyc
 *.pyo
 .venv/
 .DS_Store
+
+# packaging / build artifacts
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/

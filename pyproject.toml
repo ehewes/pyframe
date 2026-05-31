@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyframe-gif-moderation"
+version = "0.1.0"
+description = "Two-stage NSFW moderation for GIFs, videos, and images via local HuggingFace models and/or AWS Rekognition."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ellis Hewes", email = "ehewes@outlook.com" }]
+keywords = [
+  "nsfw",
+  "moderation",
+  "content-moderation",
+  "gif",
+  "video",
+  "rekognition",
+  "huggingface",
+  "image-classification",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: OS Independent",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+  "Intended Audience :: Developers",
+]
+
+# Base install is intentionally light: only what frame decoding + image handling need.
+# Backends (boto3 / transformers / torch / moviepy) are optional extras below.
+dependencies = [
+  "opencv-python-headless>=4.8",
+  "numpy>=1.24",
+  "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+aws = ["boto3>=1.34"]
+local = ["transformers>=4.40", "torch>=2.2"]
+video = ["moviepy>=2.0"]
+all = ["pyframe-gif-moderation[aws,local,video]"]
+dev = ["build", "twine", "pytest", "ruff"]
+
+[project.scripts]
+pyframe = "pyframe.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ehewes/pyframe"
+Repository = "https://github.com/ehewes/pyframe"
+Issues = "https://github.com/ehewes/pyframe/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyframe"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/pyframe", "README.md", "LICENSE", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
