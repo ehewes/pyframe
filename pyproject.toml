@@ -3,7 +3,7 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pyframe-gif-moderation"
+name = "pyframe-gif-video-image-moderation"
 version = "0.1.0"
 description = "Two-stage NSFW moderation for GIFs, videos, and images via local HuggingFace models and/or AWS Rekognition."
 readme = "README.md"
@@ -46,7 +46,7 @@ dependencies = [
 aws = ["boto3>=1.34"]
 local = ["transformers>=4.40", "torch>=2.2"]
 video = ["moviepy>=2.0"]
-all = ["pyframe-gif-moderation[aws,local,video]"]
+all = ["pyframe-gif-video-image-moderation[aws,local,video]"]
 dev = ["build", "twine", "pytest", "ruff"]
 
 [project.scripts]

@@ -17,7 +17,7 @@ class RekognitionBackend(Backend):
             import boto3
         except ImportError as exc:
             raise BackendUnavailableError(
-                "aws", "pip install 'pyframe-gif-moderation[aws]'"
+                "aws", "pip install 'pyframe-gif-video-image-moderation[aws]'"
             ) from exc
 
         self.region = region

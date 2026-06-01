@@ -10,7 +10,7 @@ def video_to_gif(video_path, output_path=None, fps: int = 15, resize_width=None)
         from moviepy import VideoFileClip
     except ImportError as exc:
         raise BackendUnavailableError(
-            "video", "pip install 'pyframe-gif-moderation[video]'"
+            "video", "pip install 'pyframe-gif-video-image-moderation[video]'"
         ) from exc
 
     if output_path is None:

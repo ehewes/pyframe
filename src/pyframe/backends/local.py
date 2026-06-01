@@ -19,7 +19,7 @@ class LocalBackend(Backend):
             from transformers import pipeline
         except ImportError as exc:
             raise BackendUnavailableError(
-                "local", "pip install 'pyframe-gif-moderation[local]'"
+                "local", "pip install 'pyframe-gif-video-image-moderation[local]'"
             ) from exc
 
         self.model = model or DEFAULT_MODEL

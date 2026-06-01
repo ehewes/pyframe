@@ -7,16 +7,16 @@ PyFrame uses **temporal segmentation** to avoid moderating every frame: it split
 ## Install
 
 ```bash
-pip install "pyframe-gif-moderation[local]"   # free local HuggingFace backend
-pip install "pyframe-gif-moderation[aws]"      # AWS Rekognition backend
-pip install "pyframe-gif-moderation[all]"      # everything (local + aws + video)
+pip install "pyframe-gif-video-image-moderation[local]"   # free local HuggingFace backend
+pip install "pyframe-gif-video-image-moderation[aws]"      # AWS Rekognition backend
+pip install "pyframe-gif-video-image-moderation[all]"      # everything (local + aws + video)
 ```
 
 Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv add "pyframe-gif-moderation[local]"
-# or, ad-hoc:  uv pip install "pyframe-gif-moderation[local]"
+uv add "pyframe-gif-video-image-moderation[local]"
+# or, ad-hoc:  uv pip install "pyframe-gif-video-image-moderation[local]"
 ```
 
 The base install is intentionally light (just `opencv-python-headless`, `numpy`, `Pillow`); the heavy backends (`boto3`, `transformers`/`torch`, `moviepy`) are optional extras you only pull in if you use them.
@@ -115,7 +115,7 @@ A 150-frame GIF flows through temporal segmentation down to a handful of extract
 
 ## Notes
 
-- The `aws` backend needs credentials: install with `pip install "pyframe-gif-moderation[aws]"`, then run `aws configure` (or set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION`).
+- The `aws` backend needs credentials: install with `pip install "pyframe-gif-video-image-moderation[aws]"`, then run `aws configure` (or set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION`).
 - `[video]` (video to GIF) needs `moviepy`, which requires a system **ffmpeg** (`brew install ffmpeg`).
 - HuggingFace **model weights** have their own licenses, separate from this package's MIT license.
 
