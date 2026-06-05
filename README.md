@@ -4,6 +4,16 @@ NSFW moderation for GIFs, videos, and images using local [HuggingFace](https://h
 
 PyFrame uses **temporal segmentation** to avoid moderating every frame: it splits an animation into equal time buckets and extracts the most significant frame from each, capturing diverse scene coverage at a fraction of the cost. It also offers an optional **two-stage cascade** (`--prescreen`): a free local model soft-screens densely, and only the flagged time windows get escalated to the precise (e.g. AWS) backend. See the [pipeline diagram](#pipeline) for a visual of the approach.
 
+<div align="center">
+
+[![PyPI version](https://img.shields.io/pypi/v/pyframe-gif-video-image-moderation)](https://pypi.org/project/pyframe-gif-video-image-moderation/)
+[![PyPI Downloads](https://img.shields.io/pepy/dt/pyframe-gif-video-image-moderation?label=PyPI%20Downloads)](https://pepy.tech/project/pyframe-gif-video-image-moderation)
+[![Python versions](https://img.shields.io/pypi/pyversions/pyframe-gif-video-image-moderation)](https://pypi.org/project/pyframe-gif-video-image-moderation/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](https://github.com/ehewes/pyframe/blob/main/LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/ehewes/pyframe/ci.yml?branch=main&label=CI)](https://github.com/ehewes/pyframe/actions/workflows/ci.yml)
+
+</div>
+
 ## Install
 
 ```bash
@@ -112,6 +122,10 @@ AWS Rekognition bills ~$1.00 / 1,000 images. A 150-frame GIF costs $0.15 to mode
 A 150-frame GIF flows through temporal segmentation down to a handful of extracted frames, optionally merged into grids, then sent to the backend:
 
 ![PyFrame pipeline: GIF frames to temporal buckets to extracted frames to merged grids to AWS Rekognition](https://raw.githubusercontent.com/ehewes/pyframe/main/media/HCBHD36W0AI3Hz4.jpeg)
+
+## Documentation
+
+Full reference docs live in [`docs/`](https://github.com/ehewes/pyframe/tree/main/docs). Start with the [output reference](https://github.com/ehewes/pyframe/blob/main/docs/output.md) for the complete JSON / `ScanResult` schema.
 
 ## Notes
 

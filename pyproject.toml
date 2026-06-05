@@ -61,7 +61,7 @@ Issues = "https://github.com/ehewes/pyframe/issues"
 packages = ["src/pyframe"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/pyframe", "README.md", "LICENSE", "tests"]
+only-include = ["src/pyframe", "tests", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
