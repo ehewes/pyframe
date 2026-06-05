@@ -6,6 +6,7 @@ here and link them from the list below.
 ## Contents
 
 - [Output reference](output.md) - every field in the JSON / `ScanResult`, explained.
+- [Performance](performance.md) - measured throughput, per-stage timing, capacity sizing, and a results log.
 
 ## See also
 
