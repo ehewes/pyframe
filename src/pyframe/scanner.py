@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import os
 import time
-
-import cv2
 
 from .backends import Backend, load_backend
 from .config import Config
 from .image_utils import merge_to_grid
-from .media import MediaKind, iter_frames, media_kind
+from .media import MediaKind, iter_frames, iter_frames_from_bytes, media_kind
 from .results import ScanResult, Severity, Verdict
 from .sampling import (
     DenseUniformSampler,
@@ -41,10 +38,18 @@ class Scanner:
         start = time.perf_counter()
         kind = media_kind(source)
         frames = list(iter_frames(source))
+        return self._scan_frames(str(source), kind, frames, start)
 
+    def scan_bytes(self, data, *, label: str = "<bytes>") -> ScanResult:
+        """Scan a GIF/image decoded from memory, no disk touched."""
+        start = time.perf_counter()
+        frames = list(iter_frames_from_bytes(data))
+        kind = MediaKind.ANIMATION if len(frames) > 1 else MediaKind.IMAGE
+        return self._scan_frames(label, kind, frames, start)
+
+    def _scan_frames(self, source, kind, frames, start) -> ScanResult:
         if kind is MediaKind.IMAGE:
             verdicts = self.precise.classify_batch(frames, min_confidence=self.min_confidence)
-            self._save(verdicts, frames, source)
             return self._aggregate(source, kind, verdicts, [], len(frames), start)
 
         if not frames:
@@ -67,7 +72,6 @@ class Scanner:
             verdicts = self._classify_merged(selected)
         else:
             verdicts = self.precise.classify_batch(selected, min_confidence=self.min_confidence)
-        self._save(verdicts, selected, source)
         return self._aggregate(source, kind, verdicts, [], len(frames), start)
 
     def _cascade(self, source, kind, frames, start) -> ScanResult:
@@ -100,7 +104,6 @@ class Scanner:
 
         # Send the top suspicious frames to the precise backend as merged grids.
         precise = self._classify_merged(selected)
-        self._save(precise, selected, source)
 
         windows = group_flagged_into_windows(flagged, len(frames), pc.group_gap, pc.window_pad)
         return self._aggregate(
@@ -138,16 +141,6 @@ class Scanner:
                 )
             )
         return verdicts
-
-    def _save(self, verdicts, frames, source) -> None:
-        out_dir = self.config.save_frames
-        if not out_dir:
-            return
-        os.makedirs(out_dir, exist_ok=True)
-        stem = os.path.splitext(os.path.basename(str(source)))[0]
-        for rank, frame in enumerate(frames):
-            name = f"{stem}_{rank:02d}_frame{frame.index:04d}.jpg"
-            cv2.imwrite(os.path.join(out_dir, name), frame.image)
 
     def _aggregate(
         self, source, kind, classified, screen_verdicts, frames_total, start,

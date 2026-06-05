@@ -9,8 +9,8 @@ from .errors import (
     UnsupportedMediaError,
 )
 from .image_utils import merge_images_to_grid, merge_to_grid
-from .media import Frame, MediaKind, iter_frames, media_kind
-from .pipe import Pipe, scan
+from .media import Frame, MediaKind, iter_frames, iter_frames_from_bytes, media_kind
+from .pipe import Pipe, scan, scan_bytes
 from .results import Label, ScanResult, Severity, Verdict
 from .scanner import Scanner
 
@@ -27,6 +27,7 @@ except Exception:
 __all__ = [
     "Pipe",
     "scan",
+    "scan_bytes",
     "Scanner",
     "Config",
     "PrescreenConfig",
@@ -39,6 +40,7 @@ __all__ = [
     "Frame",
     "MediaKind",
     "iter_frames",
+    "iter_frames_from_bytes",
     "media_kind",
     "merge_to_grid",
     "merge_images_to_grid",

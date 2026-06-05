@@ -55,7 +55,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--escalate-threshold", type=float, default=0.15, help="cascade gate (low = recall-safe)")
     parser.add_argument("--max-escalations", type=int, default=2, help="max precise (AWS) calls per file")
     parser.add_argument("--screen-fps", type=float, default=2.0, help="soft-screen sample rate")
-    parser.add_argument("--save-frames", default=None, metavar="DIR", help="write the classified frames to DIR")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--fail-on", choices=("nsfw", "uncertain", "never"), default="nsfw")
     return parser
@@ -82,7 +81,6 @@ def main() -> int:
                 escalate_threshold=args.escalate_threshold,
                 max_escalations=args.max_escalations,
                 screen_fps=args.screen_fps,
-                save_frames=args.save_frames,
             )
         except BackendUnavailableError as exc:
             print(exc, file=sys.stderr)

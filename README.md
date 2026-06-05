@@ -51,6 +51,14 @@ Pipe("clip.gif", backend="aws").run()                  # AWS Rekognition
 Pipe("clip.gif", backend="aws", prescreen=True).run()  # local screens, AWS confirms
 ```
 
+Scan raw bytes (e.g. a download) with **no disk touched** at all:
+
+```python
+from pyframe import scan_bytes
+
+result = scan_bytes(gif_bytes, backend="local")  # GIF/image decoded in memory
+```
+
 ### Tuning the two-pass
 
 Every knob is a `Pipe` param with a sensible default:
@@ -97,7 +105,6 @@ Exit code: `0` clean, `1` NSFW (per `--fail-on`), `2` bad input, `3` backend not
 | `--max-escalations` | `2` | hard cap on precise (AWS) calls per file |
 | `--screen-fps` | `2.0` | soft-screen sample rate |
 | `--use-merged` / `--frames-per-batch` | off / `2` | merge frames into a grid before classifying |
-| `--save-frames DIR` | off | write the classified frames to `DIR` |
 | `--json` / `--fail-on` | off / `nsfw` | output format / exit-code policy |
 
 ## How it works

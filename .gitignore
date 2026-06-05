@@ -12,3 +12,6 @@ build/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+
+# benchmark output
+bench_results.jsonl
