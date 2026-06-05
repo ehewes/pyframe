@@ -1,41 +1,32 @@
 #!/usr/bin/env python3
-"""Capacity-planning benchmark for PyFrame's always-on GIF moderation path.
+"""Engine benchmark for PyFrame's GIF moderation path.
 
-Decision it serves: pick the always-on instance size for live GIF traffic, rank
-compute providers on real $/1k, and settle CPU-vs-GPU. The system is always-on
-(every GIF scanned continuously); evals/RL are a passive read of stored results,
-not a separate workload, so we only benchmark the LOCAL scan path.
-
-It drives the REAL pipeline (no reimplementation). Per GIF it calls, in order:
+Measures the real pipeline's throughput, latency, per-stage timing, memory, and scaling
+under a multiprocessing pool. It drives the REAL pipeline (no reimplementation); per GIF
+it calls, in order:
     pyframe.media.iter_frames                      (decode)
     pyframe.sampling.DenseUniformSampler.select    (prescreen sampling @ screen_fps)
     pyframe.media.Frame.to_pil                      (preprocess: BGR->RGB->PIL)
     pyframe.backends.LocalBackend.classify_image    (local ViT inference, per frame)
     gate (score >= escalate_threshold, fail-open)   (escalation decision)
     on escalation: pyframe.sampling.SuspicionSampler.select + image_utils.merge_to_grid
-                   -> StubBackend (AWS/Rekognition MOCKED: instant, counted only)
-The motion sampler (MotionBucketSampler, max_frames) governs single-pass / escalation
-frame budget; the cascade prescreen samples densely at screen_fps, which is the real
-behaviour with prescreen.enabled=True.
+                   -> StubBackend (precise/AWS backend MOCKED: instant, counted only)
 
-AWS is stubbed: the precise backend returns instantly (no network); we still run the
-gate and count/log every escalation. We measure LOCAL throughput only.
+The precise backend is stubbed (instant, no network), so this measures LOCAL throughput.
 
-Concurrency = a multiprocessing (spawn) process pool, matching the production worker
-mechanism (decode is CPU-bound; threads lose to the GIL). Each worker forces
-single-threaded inference (OMP/MKL/OpenBLAS/torch/onnx = 1) so N processes don't each
-spawn multi-threaded torch and oversubscribe cores.
+Concurrency = a multiprocessing (spawn) process pool (decode is CPU-bound; threads lose
+to the GIL). Each worker forces single-threaded inference (OMP/MKL/OpenBLAS/torch/onnx=1)
+so N processes don't each spawn multi-threaded torch and oversubscribe cores.
 
 Outputs:
   1. Per-process-count scaling curve + sweet spot, knee, bottleneck class.
-  2. Inference fraction f, per-stage medians, CPU-vs-GPU verdict (Amdahl bound).
-  3. Provider projection table (Hetzner CCX + machine0; native + USD; $/1k; RAM flag).
-  4. Peak-load sizing block (baseline pick, machine0 failover, CPU-vs-GPU).
-  5. bench_results.jsonl: one record per GIF (seed schema for the eval/RL store).
-  6. Environment block (host, versions, pinned config, fx, target-util).
+  2. Per-stage median timing + inference fraction f.
+  3. bench_results.jsonl: one record per GIF.
+  4. Environment block (host, versions, pinned config).
 
 Run:
-  python scripts/bench_gifs.py --corpus ./gifs --peak-gifs-per-sec 10
+  python scripts/bench_gifs.py --corpus ./gifs
+  python scripts/bench_gifs.py --procs "1"      # single-worker profile
 
 Flags: see --help.
 """
@@ -59,7 +50,6 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
 import argparse
 import json
-import math
 import multiprocessing as mp
 import platform
 import statistics
@@ -80,29 +70,6 @@ from pyframe.image_utils import merge_to_grid
 from pyframe.media import iter_frames
 from pyframe.sampling import DenseUniformSampler, SuspicionSampler
 
-# --------------------------------------------------------------------------- #
-# Provider price lists (instance, vCPU, RAM_GB, price/hr in native currency)
-# --------------------------------------------------------------------------- #
-HETZNER_CCX = [  # EUR/hr excl VAT, dedicated vCPU
-    ("CCX13", 2, 8, 0.0264),
-    ("CCX23", 4, 16, 0.0513),
-    ("CCX33", 8, 32, 0.1009),
-    ("CCX43", 16, 64, 0.2011),
-    ("CCX53", 32, 128, 0.4014),
-    ("CCX63", 48, 192, 0.6009),
-]
-MACHINE0 = [  # USD/hr
-    ("small", 1, 1, 0.013),
-    ("medium", 2, 2, 0.034),
-    ("large", 2, 4, 0.052),
-    ("xl", 4, 8, 0.104),
-    ("xxl", 8, 16, 0.208),
-    ("xxxl", 16, 64, 0.825),
-    ("4xl", 32, 128, 1.980),
-]
-MACHINE0_GPU = ("gpu-4000ada-1", 0.836)  # USD/hr; vCPU count not published
-HOURS_PER_MONTH = 730.0
-
 # Worker-process globals (populated by worker_init under spawn).
 _SCREEN = None
 _STUB = None
@@ -110,10 +77,10 @@ _CFG = None
 
 
 class StubBackend(Backend):
-    """Mocked precise/Rekognition backend: returns instantly, no network."""
+    """Mocked precise backend: returns instantly, no network."""
 
-    name = "aws-stub"
-    cost_per_image = 0.001
+    name = "stub"
+    cost_per_image = 0.0
 
     def _score(self, image):
         return 0.0, [], None
@@ -251,7 +218,7 @@ def process_one(path):
         selected = SuspicionSampler().select(flagged_frames, budget, scores)
         for i in range(0, len(selected), per_batch):
             grid = merge_to_grid([fr.to_pil() for fr in selected[i : i + per_batch]])
-            _STUB.classify_image(grid, min_confidence=0.8)  # AWS mocked: instant, counted
+            _STUB.classify_image(grid, min_confidence=0.8)  # precise backend mocked: instant, counted
     t4 = time.perf_counter()
 
     return {
@@ -378,7 +345,6 @@ def analyse(levels, vcpu, ram_gb):
     best_hr = best["gifs_per_hr"]
     # knee = smallest P reaching >=90% of peak throughput
     knee = min((r for r in levels if r["gifs_per_hr"] >= 0.9 * best_hr), key=lambda r: r["P"])
-    # bottleneck classification
     peak_rss_gb = best["peak_rss_mb"] / 1024.0
     if peak_rss_gb >= 0.85 * ram_gb:
         bottleneck = "RAM-capacity-bound (aggregate RSS approaches host RAM before the knee)"
@@ -392,38 +358,6 @@ def analyse(levels, vcpu, ram_gb):
     else:
         bottleneck = f"CPU-bound (knee P={knee['P']})"
     return best, knee, bottleneck
-
-
-def project(instances, currency, per_vcpu_hr, rss_per_worker_gb, target_util, fx):
-    rows = []
-    for name, vcpu, ram, price in instances:
-        ram_workers = math.floor(ram / rss_per_worker_gb) if rss_per_worker_gb > 0 else vcpu
-        eff = max(0, min(vcpu, ram_workers))
-        gifs_hr = per_vcpu_hr * eff
-        price_usd = price * fx if currency == "EUR" else price
-        native = (f"€{price:.4f}" if currency == "EUR" else f"${price:.4f}")
-        cost_1k = price_usd / (gifs_hr / 1000.0) if gifs_hr > 0 else float("inf")
-        sustain = gifs_hr / 3600.0 * target_util
-        rows.append(
-            {
-                "name": name,
-                "vcpu": vcpu,
-                "ram": ram,
-                "eff": eff,
-                "ram_flag": eff < vcpu,
-                "gifs_hr": gifs_hr,
-                "native": native,
-                "price_usd": price_usd,
-                "cost_1k": cost_1k,
-                "sustain": sustain,
-            }
-        )
-    return rows
-
-
-def smallest_meeting(rows, peak):
-    ok = [r for r in rows if r["sustain"] >= peak]
-    return min(ok, key=lambda r: r["price_usd"]) if ok else None
 
 
 # --------------------------------------------------------------------------- #
@@ -444,30 +378,14 @@ def cpu_model():
 
 def versions():
     out = {}
-    try:
-        import torch
-
-        out["torch"] = torch.__version__
-    except Exception:
-        out["torch"] = "n/a"
-    try:
-        import onnxruntime
-
-        out["onnxruntime"] = onnxruntime.__version__
-    except Exception:
-        out["onnxruntime"] = "not installed"
-    try:
-        import transformers
-
-        out["transformers"] = transformers.__version__
-    except Exception:
-        out["transformers"] = "n/a"
+    for mod in ("torch", "onnxruntime", "transformers"):
+        try:
+            out[mod] = __import__(mod).__version__
+        except Exception:
+            out[mod] = "n/a"
     return out
 
 
-# --------------------------------------------------------------------------- #
-# Pretty printing
-# --------------------------------------------------------------------------- #
 def hr(title):
     print("\n" + "=" * 78)
     print(title)
@@ -476,12 +394,12 @@ def hr(title):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Capacity-planning benchmark for the always-on GIF moderation path.",
+        description="Engine benchmark for the GIF moderation path.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ap.add_argument("--corpus", default=None, help="directory of real .gif files (else synthesize)")
     ap.add_argument("--synth-count", type=int, default=120, help="GIFs to synthesize when no --corpus")
-    ap.add_argument("--out", default="bench_results.jsonl", help="per-GIF JSONL output (seed eval/RL schema)")
+    ap.add_argument("--out", default="bench_results.jsonl", help="per-GIF JSONL output")
     ap.add_argument("--duration", type=float, default=120.0, help="steady-state seconds per level")
     ap.add_argument("--min-gifs", type=int, default=2000, help="min GIFs per level (overrides short duration)")
     ap.add_argument("--warmup", type=int, default=20, help="GIFs to process+discard before timing")
@@ -491,11 +409,8 @@ def main():
     ap.add_argument("--max-frames", type=int, default=10, help="motion-sample frame budget (sweepable)")
     ap.add_argument("--escalate-threshold", type=float, default=0.15, help="gate threshold (recall-safe)")
     ap.add_argument("--frames-per-batch", type=int, default=2, help="frames per merged grid on escalation")
-    ap.add_argument("--max-escalations", type=int, default=2, help="precise (AWS) call cap per GIF")
+    ap.add_argument("--max-escalations", type=int, default=2, help="precise-backend call cap per GIF")
     ap.add_argument("--model", default="AdamCodd/vit-base-nsfw-detector", help="local ViT model id")
-    ap.add_argument("--peak-gifs-per-sec", type=float, default=10.0, help="peak live load to size for")
-    ap.add_argument("--target-util", type=float, default=0.70, help="max sustained utilization (latency safety)")
-    ap.add_argument("--fx", type=float, default=1.08, help="1 EUR -> USD")
     args = ap.parse_args()
 
     vcpu = os.cpu_count() or 1
@@ -523,8 +438,7 @@ def main():
         f"escalate_threshold={cfg['escalate_threshold']} frames_per_batch={cfg['frames_per_batch']} "
         f"max_escalations={cfg['max_escalations']}"
     )
-    print(f"  AWS/Rekognition precise backend: STUBBED (instant, counted)  model={cfg['model']}")
-    print(f"  --fx={args.fx} (EUR->USD)  --target-util={args.target_util}")
+    print(f"  precise backend: STUBBED (instant, counted)  model={cfg['model']}")
     print(
         "  pipeline fns/GIF: iter_frames -> DenseUniformSampler.select -> Frame.to_pil"
         " -> LocalBackend.classify_image (ViT) -> gate -> [SuspicionSampler.select -> merge_to_grid -> StubBackend]"
@@ -566,25 +480,21 @@ def main():
         )
 
     best, knee, bottleneck = analyse(levels, vcpu, ram_gb)
-    # sweet-spot level's records seed the jsonl + per-stage f (no re-run needed)
     sweet_records = records_by_p[best["P"]]
 
-    # per-worker throughput == per-vCPU for single-threaded inference-bound work, so a
-    # light sub-vCPU sweep still extrapolates; collapses to best/vCPU at full core load.
-    per_vcpu_hr = best["gifs_per_hr"] / min(best["P"], vcpu)
-    rss_per_worker_gb = (best["peak_rss_mb"] / 1024.0) / best["P"]
+    # per-worker throughput == per-core for single-threaded inference-bound work
+    per_core_hr = best["gifs_per_hr"] / min(best["P"], vcpu)
+    rss_per_worker_mb = best["peak_rss_mb"] / best["P"]
 
     print(f"\n  SWEET SPOT: P={best['P']}  {best['gifs_per_hr']:.0f} GIFs/hr  "
           f"(p95={best['lat_p95_ms']:.0f}ms, CPU={best['mean_cpu_pct']:.0f}%, RSS={best['peak_rss_mb']/1024:.2f}GB)")
     print(f"  KNEE: P={knee['P']} (>=90% of peak throughput)")
     print(f"  BOTTLENECK: {bottleneck}")
-    print(f"  GIFS_PER_HOUR_PER_VCPU = {per_vcpu_hr:.0f}")
-    print(f"  PEAK_RSS_PER_WORKER    = {rss_per_worker_gb*1024:.0f} MB ({rss_per_worker_gb:.2f} GB)")
-    print("  NOTE: projection assumes SAME CPU architecture across instance sizes;")
-    print("        validate by re-running on a second instance size before trusting $ numbers.")
+    print(f"  GIFs/hr per core   = {per_core_hr:.0f}")
+    print(f"  RSS per worker     = {rss_per_worker_mb:.0f} MB")
 
-    # --- per-stage + GPU verdict ---
-    hr("PER-STAGE TIMING + GPU VERDICT")
+    # --- per-stage timing ---
+    hr("PER-STAGE TIMING")
     stages = ["t_decode_sample", "t_preprocess", "t_inference", "t_gate"]
     sums = {s: sum(r[s] for r in sweet_records) for s in stages}
     meds = {s: statistics.median(r[s] for r in sweet_records) for s in stages}
@@ -594,90 +504,7 @@ def main():
         print(f"  {s:<16} median={meds[s]*1000:>8.2f} ms   share={sums[s]/total*100:>5.1f}%")
     print(f"  inference fraction f = {f:.3f}")
 
-    full_host_hr = per_vcpu_hr * vcpu  # projected throughput of a fully-loaded host
-    gpu_ceiling_hr = full_host_hr / (1 - f) if f < 1 else float("inf")
-    gpu_cost_1k = MACHINE0_GPU[1] / (gpu_ceiling_hr / 1000.0) if gpu_ceiling_hr > 0 else float("inf")
-    # best CPU $/1k across both providers (computed below too, but need it here)
-    cpu_rows = project(HETZNER_CCX, "EUR", per_vcpu_hr, rss_per_worker_gb, args.target_util, args.fx) + project(
-        MACHINE0, "USD", per_vcpu_hr, rss_per_worker_gb, args.target_util, args.fx
-    )
-    best_cpu = min(cpu_rows, key=lambda r: r["cost_1k"])
-    print(
-        f"\n  GPU optimistic ceiling = full_host_throughput / (1-f) = {full_host_hr:.0f}/{1-f:.3f} = {gpu_ceiling_hr:.0f} GIFs/hr"
-    )
-    print(f"  GPU {MACHINE0_GPU[0]} @ ${MACHINE0_GPU[1]:.3f}/hr  ->  ${gpu_cost_1k:.4f}/1k (at the optimistic ceiling)")
-    print(f"  best CPU option {best_cpu['name']} -> ${best_cpu['cost_1k']:.4f}/1k")
-    if gpu_cost_1k >= best_cpu["cost_1k"]:
-        gpu_verdict = (
-            f"GPU conclusively not worth it (${gpu_cost_1k:.4f}/1k vs ${best_cpu['cost_1k']:.4f}/1k CPU, "
-            "even with inference time -> 0)"
-        )
-    else:
-        gpu_verdict = (
-            f"GPU *could* win at its optimistic ceiling (${gpu_cost_1k:.4f}/1k < ${best_cpu['cost_1k']:.4f}/1k) "
-            "-- verify with a real GPU run before trusting this"
-        )
-    print(f"  VERDICT: {gpu_verdict}")
-    print("  (assumes decode/gate stay CPU-bound at host speed and inference -> 0 on GPU; maximally GPU-favourable)")
-
-    # --- provider projection ---
-    hr("PROVIDER COST PROJECTION  (effective_workers = min(vCPU, floor(RAM/RSS_per_worker)))")
-    het = project(HETZNER_CCX, "EUR", per_vcpu_hr, rss_per_worker_gb, args.target_util, args.fx)
-    m0 = project(MACHINE0, "USD", per_vcpu_hr, rss_per_worker_gb, args.target_util, args.fx)
-
-    def print_rows(title, rows):
-        print(f"\n  {title}")
-        h = f"    {'instance':<10} {'vCPU':>4} {'RAM':>4} {'eff':>4} {'native/hr':>10} {'USD/hr':>8} {'GIFs/hr':>9} {'$/1k':>8} {'sust GIFs/s':>11} {'RAM?':>5}"
-        print(h)
-        print("    " + "-" * (len(h) - 4))
-        for r in rows:
-            print(
-                f"    {r['name']:<10} {r['vcpu']:>4} {r['ram']:>4} {r['eff']:>4} {r['native']:>10} "
-                f"${r['price_usd']:>7.4f} {r['gifs_hr']:>9.0f} ${r['cost_1k']:>7.4f} {r['sustain']:>11.2f} "
-                f"{'YES' if r['ram_flag'] else '-':>5}"
-            )
-
-    print_rows("Hetzner Cloud CCX (EUR excl VAT; USD via --fx):", het)
-    print_rows("machine0 (USD):", m0)
-    print("\n  Prices exclude VAT. machine0 also bills suspended-image storage ($0.078/GB/mo):")
-    print("  irrelevant for an always-on node, relevant only for burst/scale-to-zero.")
-
-    # --- peak-load sizing ---
-    hr(f"PEAK-LOAD SIZING  (peak={args.peak_gifs_per_sec} GIFs/s at {args.target_util:.0%} util)")
-    het_pick = smallest_meeting(het, args.peak_gifs_per_sec)
-    m0_pick = smallest_meeting(m0, args.peak_gifs_per_sec)
-
-    def fmt_pick(r, label):
-        if not r:
-            return f"  {label}: NONE in catalog sustains {args.peak_gifs_per_sec} GIFs/s -- scale horizontally."
-        return (
-            f"  {label}: {r['name']} ({r['vcpu']}vCPU/{r['ram']}GB) -> "
-            f"{r['sustain']:.1f} GIFs/s sustainable, ${r['price_usd']*HOURS_PER_MONTH:,.0f}/mo, ${r['cost_1k']:.4f}/1k"
-            + ("  [RAM-constrained]" if r["ram_flag"] else "")
-        )
-
-    print(fmt_pick(het_pick, "Hetzner baseline"))
-    print(fmt_pick(m0_pick, "machine0 (if you prefer one provider)"))
-
-    # failover: smallest machine0 whose sustained throughput >= chosen Hetzner baseline
-    failover = None
-    if het_pick:
-        cand = [r for r in m0 if r["sustain"] >= het_pick["sustain"]]
-        failover = min(cand, key=lambda r: r["price_usd"]) if cand else None
-    print(
-        fmt_pick(failover, "machine0 FAILOVER (matches Hetzner baseline)")
-        if failover
-        else "  machine0 FAILOVER: no single machine0 matches the Hetzner baseline -- use 2+ nodes."
-    )
-
-    hr("VERDICT")
-    print(f"  1. BASELINE (Hetzner): {het_pick['name'] if het_pick else 'scale-out'}"
-          + (f" @ ${het_pick['price_usd']*HOURS_PER_MONTH:,.0f}/mo, ${het_pick['cost_1k']:.4f}/1k" if het_pick else ""))
-    print(f"  2. FAILOVER (machine0): {failover['name'] if failover else 'multi-node'}"
-          + (f" @ ${failover['price_usd']*HOURS_PER_MONTH:,.0f}/mo" if failover else ""))
-    print(f"  3. CPU-vs-GPU: {gpu_verdict}")
-
-    # --- jsonl seed ---
+    # --- jsonl ---
     schema_keys = [
         "gif_id", "n_frames_total", "n_frames_scored", "t_decode_sample", "t_preprocess",
         "t_inference", "t_gate", "latency_ms", "peak_rss_mb", "max_local_score", "escalated",
