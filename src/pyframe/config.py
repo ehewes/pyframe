@@ -27,5 +27,4 @@ class Config:
     frames_per_batch: int = 2
     screen_backend: object = "local"
     screen_model: str | None = None
-    save_frames: str | None = None
     prescreen: PrescreenConfig = field(default_factory=PrescreenConfig)

@@ -4,6 +4,17 @@ NSFW moderation for GIFs, videos, and images using local [HuggingFace](https://h
 
 PyFrame uses **temporal segmentation** to avoid moderating every frame: it splits an animation into equal time buckets and extracts the most significant frame from each, capturing diverse scene coverage at a fraction of the cost. It also offers an optional **two-stage cascade** (`--prescreen`): a free local model soft-screens densely, and only the flagged time windows get escalated to the precise (e.g. AWS) backend. See the [pipeline diagram](#pipeline) for a visual of the approach.
 
+<div align="center">
+
+[![PyPI version](https://img.shields.io/pypi/v/pyframe-gif-video-image-moderation)](https://pypi.org/project/pyframe-gif-video-image-moderation/)
+[![PyPI Downloads](https://img.shields.io/pepy/dt/pyframe-gif-video-image-moderation?label=PyPI%20Downloads)](https://pepy.tech/project/pyframe-gif-video-image-moderation)
+[![Python versions](https://img.shields.io/pypi/pyversions/pyframe-gif-video-image-moderation)](https://pypi.org/project/pyframe-gif-video-image-moderation/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](https://github.com/ehewes/pyframe/blob/main/LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/ehewes/pyframe/ci.yml?branch=main&label=CI)](https://github.com/ehewes/pyframe/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-eden.report/docs-blueviolet)](https://www.eden.report/docs)
+
+</div>
+
 ## Install
 
 ```bash
@@ -39,6 +50,14 @@ Swap the backend, or turn on the two-pass cascade:
 ```python
 Pipe("clip.gif", backend="aws").run()                  # AWS Rekognition
 Pipe("clip.gif", backend="aws", prescreen=True).run()  # local screens, AWS confirms
+```
+
+Scan raw bytes (e.g. a download) with **no disk touched** at all:
+
+```python
+from pyframe import scan_bytes
+
+result = scan_bytes(gif_bytes, backend="local")  # GIF/image decoded in memory
 ```
 
 ### Tuning the two-pass
@@ -87,7 +106,6 @@ Exit code: `0` clean, `1` NSFW (per `--fail-on`), `2` bad input, `3` backend not
 | `--max-escalations` | `2` | hard cap on precise (AWS) calls per file |
 | `--screen-fps` | `2.0` | soft-screen sample rate |
 | `--use-merged` / `--frames-per-batch` | off / `2` | merge frames into a grid before classifying |
-| `--save-frames DIR` | off | write the classified frames to `DIR` |
 | `--json` / `--fail-on` | off / `nsfw` | output format / exit-code policy |
 
 ## How it works
@@ -112,6 +130,14 @@ AWS Rekognition bills ~$1.00 / 1,000 images. A 150-frame GIF costs $0.15 to mode
 A 150-frame GIF flows through temporal segmentation down to a handful of extracted frames, optionally merged into grids, then sent to the backend:
 
 ![PyFrame pipeline: GIF frames to temporal buckets to extracted frames to merged grids to AWS Rekognition](https://raw.githubusercontent.com/ehewes/pyframe/main/media/HCBHD36W0AI3Hz4.jpeg)
+
+A short, annotated **live** version of this diagram is at **[eden.report/docs](https://www.eden.report/docs)**.
+
+## Documentation
+
+The documentation home is **[eden.report/docs](https://www.eden.report/docs)**: the fullest guides plus a short annotated live diagram of the pipeline.
+
+Reference docs also live in [`docs/`](https://github.com/ehewes/pyframe/tree/main/docs); start with the [output reference](https://github.com/ehewes/pyframe/blob/main/docs/output.md) for the complete JSON / `ScanResult` schema.
 
 ## Notes
 

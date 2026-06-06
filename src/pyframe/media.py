@@ -98,3 +98,37 @@ def iter_frames(source: str | os.PathLike) -> Iterator[Frame]:
             index += 1
     finally:
         cap.release()
+
+
+def iter_frames_from_bytes(data: bytes) -> Iterator[Frame]:
+    """Decode a GIF / static image from memory (no disk). Pillow only; for video
+    bytes use the path-based API. Motion + timestamps match iter_frames."""
+    import io
+
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        n_frames = getattr(img, "n_frames", 1)
+    except Exception as exc:
+        raise MediaDecodeError(
+            f"could not decode bytes in memory: {exc} "
+            "(video bytes are not supported by scan_bytes; use the path-based API)"
+        ) from exc
+
+    if n_frames <= 1:
+        rgb = np.asarray(img.convert("RGB"))
+        yield Frame(index=0, timestamp=0.0, image=cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        return
+
+    prev_gray = None
+    timestamp = 0.0
+    for index in range(n_frames):
+        img.seek(index)
+        rgb = np.asarray(img.convert("RGB"))
+        frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(cv2.resize(frame, (64, 64)), cv2.COLOR_BGR2GRAY)
+        motion = 0.0 if prev_gray is None else float(np.sum(cv2.absdiff(gray, prev_gray)))
+        prev_gray = gray
+        yield Frame(index=index, timestamp=timestamp, image=frame, motion_score=motion)
+        timestamp += (img.info.get("duration") or 100) / 1000.0  # per-frame GIF duration (ms)

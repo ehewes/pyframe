@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyframe-gif-video-image-moderation"
-version = "0.1.0"
+version = "0.2.0"
 description = "Two-stage NSFW moderation for GIFs, videos, and images via local HuggingFace models and/or AWS Rekognition."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -61,7 +61,7 @@ Issues = "https://github.com/ehewes/pyframe/issues"
 packages = ["src/pyframe"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/pyframe", "README.md", "LICENSE", "tests"]
+only-include = ["src/pyframe", "tests", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -28,7 +28,6 @@ class Pipe:
         window_pad=4,
         max_escalations=2,
         fail_open=True,
-        save_frames=None,
     ):
         self.input_path = input_path
         self.config = Config(
@@ -43,7 +42,6 @@ class Pipe:
             frames_per_batch=frames_per_batch,
             screen_backend=screen_backend,
             screen_model=screen_model,
-            save_frames=save_frames,
             prescreen=PrescreenConfig(
                 enabled=prescreen,
                 screen_fps=screen_fps,
@@ -61,3 +59,9 @@ class Pipe:
 
 def scan(source, **kwargs) -> ScanResult:
     return Pipe(source, **kwargs).run()
+
+
+def scan_bytes(data, *, label="<bytes>", **kwargs) -> ScanResult:
+    """Scan a GIF/image from raw bytes (e.g. a download) without touching disk."""
+    config = Pipe(label, **kwargs).config  # reuse Pipe's config building; path unused
+    return Scanner.from_config(config).scan_bytes(data, label=label)

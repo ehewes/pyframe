@@ -81,6 +81,29 @@ def test_cascade_pads_to_full_grid_when_one_frame_flagged():
     assert result.is_nsfw
 
 
+def test_scan_bytes_decodes_in_memory():
+    import io
+
+    from PIL import Image
+
+    from pyframe.media import iter_frames_from_bytes
+
+    # distinct fills so PIL's GIF optimizer doesn't collapse identical frames
+    pil = [Image.fromarray(np.full((16, 16, 3), v, np.uint8)) for v in (10, 60, 250, 120, 30)]
+    buf = io.BytesIO()
+    pil[0].save(buf, format="GIF", save_all=True, append_images=pil[1:], duration=80, loop=0)
+    data = buf.getvalue()
+
+    decoded = list(iter_frames_from_bytes(data))
+    assert len(decoded) == 5  # decoded from memory, no disk
+    assert any(f.motion_score > 0 for f in decoded)
+
+    scanner = _scanner(FakeBackend("aws", 0.001), screen=FakeBackend("local"), enabled=True)
+    result = scanner.scan_bytes(data, label="x.gif")
+    assert result.media_kind == "animation"
+    assert result.frames_total == 5
+
+
 def test_cascade_fail_open_escalates_on_error():
     class BrokenScreen(Backend):
         name = "local"
