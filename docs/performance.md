@@ -65,10 +65,7 @@ Against ~239 ms of inference, the difference is noise.
 ## Reproduce
 
 ```bash
-pip install psutil matplotlib                          # bench/plot tools, not runtime deps
-python scripts/bench_gifs.py --procs "1" --duration 30  # single-worker profile -> bench_results.jsonl
-python scripts/bench_decode.py                          # decode comparison
-python scripts/plot_results.py bench_results.jsonl      # regenerate the charts in media/
+python scripts/bench_decode.py   # decode comparison
 ```
 
 ## Results log
