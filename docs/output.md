@@ -145,3 +145,7 @@ exit code encodes the outcome so it slots into shell gates:
 ```bash
 pyframe upload.gif --backend local || echo "rejected"
 ```
+
+---
+
+More docs, including a short annotated live diagram of the pipeline, are at **[eden.report/docs](https://www.eden.report/docs)**.

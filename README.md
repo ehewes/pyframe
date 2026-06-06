@@ -11,6 +11,7 @@ PyFrame uses **temporal segmentation** to avoid moderating every frame: it split
 [![Python versions](https://img.shields.io/pypi/pyversions/pyframe-gif-video-image-moderation)](https://pypi.org/project/pyframe-gif-video-image-moderation/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](https://github.com/ehewes/pyframe/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/ehewes/pyframe/ci.yml?branch=main&label=CI)](https://github.com/ehewes/pyframe/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-eden.report/docs-blueviolet)](https://www.eden.report/docs)
 
 </div>
 
@@ -130,9 +131,13 @@ A 150-frame GIF flows through temporal segmentation down to a handful of extract
 
 ![PyFrame pipeline: GIF frames to temporal buckets to extracted frames to merged grids to AWS Rekognition](https://raw.githubusercontent.com/ehewes/pyframe/main/media/HCBHD36W0AI3Hz4.jpeg)
 
+A short, annotated **live** version of this diagram is at **[eden.report/docs](https://www.eden.report/docs)**.
+
 ## Documentation
 
-Full reference docs live in [`docs/`](https://github.com/ehewes/pyframe/tree/main/docs). Start with the [output reference](https://github.com/ehewes/pyframe/blob/main/docs/output.md) for the complete JSON / `ScanResult` schema.
+The documentation home is **[eden.report/docs](https://www.eden.report/docs)**: the fullest guides plus a short annotated live diagram of the pipeline.
+
+Reference docs also live in [`docs/`](https://github.com/ehewes/pyframe/tree/main/docs); start with the [output reference](https://github.com/ehewes/pyframe/blob/main/docs/output.md) for the complete JSON / `ScanResult` schema.
 
 ## Notes
 

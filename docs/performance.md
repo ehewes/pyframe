@@ -79,3 +79,7 @@ Append a row when you measure on new hardware.
 |-----|-------------------|-----------------|---------------------|------------|
 | reference | torch CPU, 1 thread | ~3.1 | ~0.91 | ~0.5 GB |
 | | | | | |
+
+---
+
+More docs, including a short annotated live diagram of the pipeline, are at **[eden.report/docs](https://www.eden.report/docs)**.
