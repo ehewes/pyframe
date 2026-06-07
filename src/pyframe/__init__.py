@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .backends import Backend, load_backend
+from .backends import Backend, clear_backend_cache, load_backend
 from .config import Config, PrescreenConfig
 from .errors import (
     BackendUnavailableError,
@@ -20,9 +20,9 @@ try:
     try:
         __version__ = version("pyframe-gif-video-image-moderation")
     except PackageNotFoundError:
-        __version__ = "0.2.0"
+        __version__ = "0.3.0"
 except Exception:
-    __version__ = "0.2.0"
+    __version__ = "0.3.0"
 
 __all__ = [
     "Pipe",
@@ -37,6 +37,7 @@ __all__ = [
     "Severity",
     "Backend",
     "load_backend",
+    "clear_backend_cache",
     "Frame",
     "MediaKind",
     "iter_frames",

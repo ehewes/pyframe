@@ -2,7 +2,7 @@
 """Micro-benchmark: cv2 file-path decode vs in-memory Pillow decode (the scan_bytes path).
 
 Shows the per-GIF decode cost of each, so you can see the millisecond delta against
-the ~789 ms ViT inference that dominates total time.
+the ViT inference that dominates total time (~91% of wall-clock; see docs/performance.md).
 
     python scripts/bench_decode.py [path/to.gif]   # synthesizes one if omitted
 """
@@ -52,4 +52,4 @@ if __name__ == "__main__":
     print(f"  cv2 file-path decode:   median {c:6.1f} ms")
     print(f"  in-memory bytes decode: median {m:6.1f} ms")
     delta = m - c
-    print(f"  delta: {delta:+.1f} ms ({delta / c * 100:+.0f}%)  -- vs ~789 ms ViT inference, this is noise")
+    print(f"  delta: {delta:+.1f} ms ({delta / c * 100:+.0f}%)  -- vs the ViT inference (~91% of total), this is noise")

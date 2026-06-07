@@ -61,30 +61,40 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    from .pipe import scan
+    from .config import Config, PrescreenConfig
+    from .scanner import Scanner
 
     args = build_parser().parse_args()
+
+    config = Config(
+        backend=args.backend,
+        model=args.model,
+        region=args.region,
+        max_frames=args.max_frames,
+        min_confidence=args.min_confidence,
+        sampler=args.sampler,
+        use_merged=args.use_merged,
+        frames_per_batch=args.frames_per_batch,
+        prescreen=PrescreenConfig(
+            enabled=args.prescreen,
+            screen_fps=args.screen_fps,
+            escalate_threshold=args.escalate_threshold,
+            max_escalations=args.max_escalations,
+        ),
+    )
+
+    # Build the backend (and load the model) once, then reuse it for every file,
+    # instead of reloading the model per path.
+    try:
+        scanner = Scanner.from_config(config)
+    except BackendUnavailableError as exc:
+        print(exc, file=sys.stderr)
+        return 3
+
     rc = 0
     for path in args.paths:
         try:
-            result = scan(
-                path,
-                backend=args.backend,
-                model=args.model,
-                region=args.region,
-                max_frames=args.max_frames,
-                min_confidence=args.min_confidence,
-                sampler=args.sampler,
-                use_merged=args.use_merged,
-                frames_per_batch=args.frames_per_batch,
-                prescreen=args.prescreen,
-                escalate_threshold=args.escalate_threshold,
-                max_escalations=args.max_escalations,
-                screen_fps=args.screen_fps,
-            )
-        except BackendUnavailableError as exc:
-            print(exc, file=sys.stderr)
-            return 3
+            result = scanner.scan(path)
         except (UnsupportedMediaError, MediaDecodeError, FileNotFoundError, PyFrameError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             rc = max(rc, 2)
