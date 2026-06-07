@@ -14,3 +14,23 @@ here and link them from the list below.
 
 - [eden.report/docs](https://www.eden.report/docs) - the documentation website: expanded guides and an annotated live pipeline diagram.
 - Project [README](../README.md) - install, quickstart, CLI, and the pipeline diagram.
+
+## References
+
+The temporal sampling and windowing design (uniform-by-time coverage as a recall floor,
+motion as a content-blind cost lever, and grouping flagged frames into temporal windows)
+is informed by the temporal action segmentation survey:
+
+> Guodong Ding, Fadime Sener, and Angela Yao. "Temporal Action Segmentation: An Analysis of Modern Techniques." arXiv:2210.10352, 2023. https://arxiv.org/abs/2210.10352
+
+```bibtex
+@misc{ding2023temporalactionsegmentationanalysis,
+      title={Temporal Action Segmentation: An Analysis of Modern Techniques},
+      author={Guodong Ding and Fadime Sener and Angela Yao},
+      year={2023},
+      eprint={2210.10352},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2210.10352},
+}
+```

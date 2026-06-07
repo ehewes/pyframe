@@ -80,6 +80,8 @@ class Scanner:
         # can fall entirely between selected frames. Motion is content-blind (it can keep
         # a moving SFW frame over a static NSFW one in the same region), so it only ever
         # spends the *spare* budget, never replaces the time-coverage floor.
+        # cf. Ding, Sener, and Yao, arXiv:2210.10352 (temporal coverage as a prior, and
+        # the decoupling of motion from static semantic content).
         cfg = self.config
         floor = DenseUniformSampler(cfg.prescreen.screen_fps).select(frames)
         if len(floor) >= cfg.max_frames:

@@ -1,3 +1,16 @@
+"""Frame sampling strategies for temporal coverage and cost control.
+
+The temporal sampling and windowing design here is informed by the temporal action
+segmentation survey of Ding, Sener, and Yao: its treatment of temporal coverage and
+local-continuity priors, and the observation that motion features are decoupled from
+static semantic content. Accordingly we use uniform-by-time sampling as a recall floor
+(DenseUniformSampler), treat motion as a content-blind cost lever (MotionBucketSampler),
+and group flagged frames into temporal windows (group_flagged_into_windows).
+
+    Ding, G., Sener, F., and Yao, A. "Temporal Action Segmentation: An Analysis of
+    Modern Techniques." arXiv:2210.10352, 2023. https://arxiv.org/abs/2210.10352
+"""
+
 from __future__ import annotations
 
 from typing import Iterable, Mapping, Sequence
