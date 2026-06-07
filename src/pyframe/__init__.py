@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .backends import Backend, load_backend
+from .backends import Backend, clear_backend_cache, load_backend
 from .config import Config, PrescreenConfig
 from .errors import (
     BackendUnavailableError,
@@ -37,6 +37,7 @@ __all__ = [
     "Severity",
     "Backend",
     "load_backend",
+    "clear_backend_cache",
     "Frame",
     "MediaKind",
     "iter_frames",
