@@ -20,9 +20,9 @@ try:
     try:
         __version__ = version("pyframe-gif-video-image-moderation")
     except PackageNotFoundError:
-        __version__ = "0.2.0"
+        __version__ = "0.3.0"
 except Exception:
-    __version__ = "0.2.0"
+    __version__ = "0.3.0"
 
 __all__ = [
     "Pipe",
