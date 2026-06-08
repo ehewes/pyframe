@@ -139,6 +139,10 @@ The documentation home is **[eden.report/docs](https://www.eden.report/docs)**: 
 
 Reference docs also live in [`docs/`](https://github.com/ehewes/pyframe/tree/main/docs); start with the [output reference](https://github.com/ehewes/pyframe/blob/main/docs/output.md) for the complete JSON / `ScanResult` schema.
 
+## Citation
+
+PyFrame's temporal sampling design is informed by the temporal action segmentation survey of Ding, Sener, and Yao ([arXiv:2210.10352](https://arxiv.org/abs/2210.10352)). Full citation and BibTeX: [`docs/README.md`](https://github.com/ehewes/pyframe/blob/main/docs/README.md#references).
+
 ## Notes
 
 - The `aws` backend needs credentials: install with `pip install "pyframe-gif-video-image-moderation[aws]"`, then run `aws configure` (or set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION`).

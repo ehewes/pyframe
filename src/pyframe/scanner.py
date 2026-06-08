@@ -66,13 +66,38 @@ class Scanner:
             if len(selected) > cfg.max_frames:
                 selected = MotionBucketSampler().select(selected, cfg.max_frames)
         else:
-            selected = MotionBucketSampler().select(frames, cfg.max_frames)
+            selected = self._motion_select_with_floor(frames)
 
         if cfg.use_merged:
             verdicts = self._classify_merged(selected)
         else:
             verdicts = self.precise.classify_batch(selected, min_confidence=self.min_confidence)
         return self._aggregate(source, kind, verdicts, [], len(frames), start)
+
+    def _motion_select_with_floor(self, frames):
+        # Recall floor for the default (motion) sampler. The uniform-by-time sample at
+        # screen_fps bounds the sampling stride, so no NSFW event longer than that stride
+        # can fall entirely between selected frames. Motion is content-blind (it can keep
+        # a moving SFW frame over a static NSFW one in the same region), so it only ever
+        # spends the *spare* budget, never replaces the time-coverage floor.
+        # cf. Ding, Sener, and Yao, arXiv:2210.10352 (temporal coverage as a prior, and
+        # the decoupling of motion from static semantic content).
+        cfg = self.config
+        floor = DenseUniformSampler(cfg.prescreen.screen_fps).select(frames)
+        if len(floor) >= cfg.max_frames:
+            # The floor already fills the budget; motion only decides what to drop,
+            # exactly as the `dense` path trims its own uniform sample.
+            return MotionBucketSampler().select(floor, cfg.max_frames)
+        # Spare budget: keep the whole time-coverage floor, then fill the remainder with
+        # the highest-motion frames the floor did not already include.
+        have = {f.index for f in floor}
+        extra = sorted(
+            (f for f in frames if f.index not in have),
+            key=lambda f: f.motion_score,
+            reverse=True,
+        )
+        selected = floor + extra[: cfg.max_frames - len(floor)]
+        return sorted(selected, key=lambda f: f.index)
 
     def _cascade(self, source, kind, frames, start) -> ScanResult:
         cfg = self.config

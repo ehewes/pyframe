@@ -116,3 +116,26 @@ def test_cascade_fail_open_escalates_on_error():
     scanner = _scanner(FakeBackend("aws", cost=0.001), screen=BrokenScreen(), enabled=True, fail_open=True)
     result = scanner._cascade("clip.gif", MediaKind.ANIMATION, frames, time.perf_counter())
     assert result.frames_classified > 0  # errors were escalated, not silently cleared
+
+
+def test_motion_sampler_always_includes_time_coverage_floor():
+    from pyframe.sampling import DenseUniformSampler
+
+    # 40 frames at 10 fps (4s). Motion is concentrated in the first 10 frames; the
+    # rest are static. Pure motion bucketing over-picks the busy head and leaves whole
+    # static time slices unsampled. The recall floor must still cover them.
+    frames = [
+        Frame(index=i, timestamp=i / 10.0, image=np.zeros((8, 8, 3), np.uint8),
+              motion_score=100.0 if i < 10 else 0.0)
+        for i in range(40)
+    ]
+    cfg = Config(sampler="motion", max_frames=10, prescreen=PrescreenConfig(screen_fps=2.0))
+    scanner = Scanner(FakeBackend(), config=cfg)
+
+    selected = scanner._motion_select_with_floor(frames)
+    floor_idx = {f.index for f in DenseUniformSampler(2.0).select(frames)}
+    selected_idx = {f.index for f in selected}
+
+    assert floor_idx <= selected_idx  # time-coverage floor is never dropped for motion
+    assert len(selected) <= cfg.max_frames  # cost cap still respected
+    assert [f.index for f in selected] == sorted(selected_idx)  # returned in index order
