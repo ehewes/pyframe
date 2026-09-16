@@ -1,6 +1,6 @@
 import numpy as np
 
-from pyframe.media import Frame
+from pyframe.media import Frame, FrameMeta
 from pyframe.sampling import (
     DenseUniformSampler,
     MotionBucketSampler,
@@ -71,3 +71,30 @@ def test_group_windows_merges_overlap_after_padding():
 
 def test_group_windows_empty():
     assert group_flagged_into_windows([], n_frames=10, gap=2, pad=1) == []
+
+
+def _metas(motions, fps=10.0):
+    return [
+        FrameMeta(index=i, timestamp=i / fps, motion_score=m) for i, m in enumerate(motions)
+    ]
+
+
+def test_samplers_pick_the_same_frames_from_metadata_as_from_frames():
+    # Sampling runs on metadata now and pixels are fetched afterwards, so the two must
+    # agree exactly or the scan would moderate a different frame than the one chosen.
+    motions = [(i * 37) % 100 for i in range(40)]
+    frames, metas = _frames(motions), _metas(motions)
+    scores = {i: (i % 7) / 10.0 for i in range(40)}
+
+    assert (
+        [f.index for f in DenseUniformSampler(2.0).select(frames)]
+        == [m.index for m in DenseUniformSampler(2.0).select(metas)]
+    )
+    assert (
+        [f.index for f in MotionBucketSampler().select(frames, 6)]
+        == [m.index for m in MotionBucketSampler().select(metas, 6)]
+    )
+    assert (
+        [f.index for f in SuspicionSampler().select(frames, 5, scores)]
+        == [m.index for m in SuspicionSampler().select(metas, 5, scores)]
+    )

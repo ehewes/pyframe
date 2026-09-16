@@ -1,3 +1,5 @@
+import io
+
 import numpy as np
 import pytest
 from PIL import Image
@@ -6,9 +8,14 @@ from pyframe.errors import MediaDecodeError, UnsupportedMediaError
 from pyframe.media import (
     ANIMATION_EXTS,
     IMAGE_EXTS,
+    FrameMeta,
     MediaKind,
+    iter_frame_meta,
+    iter_frame_meta_from_bytes,
     iter_frames,
+    iter_frames_at,
     iter_frames_from_bytes,
+    iter_frames_from_bytes_at,
     media_kind,
 )
 
@@ -17,6 +24,13 @@ def _write_gif(path, fills=(10, 60, 250, 120, 30), size=32, duration=80):
     imgs = [Image.fromarray(np.full((size, size, 3), v, np.uint8)) for v in fills]
     imgs[0].save(path, save_all=True, append_images=imgs[1:], duration=duration, loop=0)
     return str(path)
+
+
+def _gif_bytes(fills=(10, 60, 250, 120, 30), size=16, duration=80):
+    imgs = [Image.fromarray(np.full((size, size, 3), v, np.uint8)) for v in fills]
+    buf = io.BytesIO()
+    imgs[0].save(buf, format="GIF", save_all=True, append_images=imgs[1:], duration=duration, loop=0)
+    return buf.getvalue()
 
 
 # The cv2.VideoCapture path had no coverage at all, so nothing checked that the OpenCV
@@ -73,6 +87,95 @@ def test_iter_frames_on_a_gif_that_is_not_a_gif(tmp_path):
 def test_iter_frames_from_bytes_on_garbage():
     with pytest.raises(MediaDecodeError):
         list(iter_frames_from_bytes(b"not an image"))
+
+
+# The two-pass split is only safe if pass two returns exactly what a single full decode
+# would have. These pin that, since a drift between the passes would silently moderate a
+# different frame than the one sampling chose.
+
+MANY = tuple(range(0, 200, 8))
+
+
+def test_meta_pass_matches_the_full_decode(tmp_path):
+    path = _write_gif(tmp_path / "clip.gif", fills=MANY)
+
+    full = [(f.index, f.timestamp, f.motion_score) for f in iter_frames(path)]
+    meta = [(m.index, m.timestamp, m.motion_score) for m in iter_frame_meta(path)]
+
+    assert meta == full
+
+
+def test_fetched_frames_match_the_full_decode(tmp_path):
+    path = _write_gif(tmp_path / "clip.gif", fills=MANY)
+    full = {f.index: f for f in iter_frames(path)}
+    wanted = [m for m in iter_frame_meta(path) if m.index in (0, 7, 13)]
+
+    got = list(iter_frames_at(path, wanted))
+
+    assert [f.index for f in got] == [0, 7, 13]
+    for frame in got:
+        original = full[frame.index]
+        assert frame.timestamp == original.timestamp
+        # Carried from the meta, never recomputed: a diff against the previous *kept*
+        # frame would measure across the skipped gap instead.
+        assert frame.motion_score == original.motion_score
+        assert np.array_equal(frame.image, original.image)
+
+
+def test_iter_frames_at_sorts_and_deduplicates(tmp_path):
+    path = _write_gif(tmp_path / "clip.gif")
+    metas = list(iter_frame_meta(path))
+    scrambled = [metas[3], metas[1], metas[3], metas[0]]
+
+    assert [f.index for f in iter_frames_at(path, scrambled)] == [0, 1, 3]
+
+
+def test_iter_frames_at_with_nothing_wanted(tmp_path):
+    path = _write_gif(tmp_path / "clip.gif")
+
+    assert list(iter_frames_at(path, [])) == []
+
+
+def test_iter_frames_at_raises_when_the_pass_ends_early(tmp_path):
+    path = _write_gif(tmp_path / "clip.gif")  # five frames
+
+    with pytest.raises(MediaDecodeError):
+        list(iter_frames_at(path, [FrameMeta(index=99, timestamp=9.9)]))
+
+
+def test_meta_and_fetch_round_trip_for_a_still_image(tmp_path):
+    path = tmp_path / "still.png"
+    Image.fromarray(np.full((16, 24, 3), 200, np.uint8)).save(path)
+
+    metas = list(iter_frame_meta(str(path)))
+    frames = list(iter_frames_at(str(path), metas))
+
+    assert [(m.index, m.timestamp) for m in metas] == [(0, 0.0)]
+    assert frames[0].image.shape == (16, 24, 3)
+
+
+def test_bytes_meta_pass_matches_the_full_decode():
+    # Guards the cumulative per-frame GIF durations, which are not reconstructible from
+    # an index and an fps the way the file path timestamps are.
+    data = _gif_bytes()
+
+    full = [(f.index, f.timestamp, f.motion_score) for f in iter_frames_from_bytes(data)]
+    meta = [(m.index, m.timestamp, m.motion_score) for m in iter_frame_meta_from_bytes(data)]
+
+    assert meta == full
+
+
+def test_bytes_fetch_matches_the_full_decode():
+    data = _gif_bytes()
+    full = {f.index: f for f in iter_frames_from_bytes(data)}
+    wanted = [m for m in iter_frame_meta_from_bytes(data) if m.index in (1, 4)]
+
+    got = list(iter_frames_from_bytes_at(data, wanted))
+
+    assert [f.index for f in got] == [1, 4]
+    for frame in got:
+        assert frame.timestamp == full[frame.index].timestamp
+        assert np.array_equal(frame.image, full[frame.index].image)
 
 
 @pytest.mark.parametrize("ext", sorted(IMAGE_EXTS))

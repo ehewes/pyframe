@@ -98,7 +98,7 @@ Exit code: `0` clean, `1` NSFW (per `--fail-on`), `2` bad input, `3` backend not
 | `--backend` | `auto` | `local`, `aws`, or `local:<model-id>` |
 | `--model` | model default | HuggingFace model id (local backend) |
 | `--region` | `us-east-1` | AWS region (aws backend) |
-| `--max-frames` | `10` | frames to extract from a GIF/video |
+| `--max-frames` | `10` | frames to extract from a GIF/video (must be ≥ 1) |
 | `--min-confidence` | backend default | NSFW threshold (0-1); `0.5` local, `0.8` aws |
 | `--sampler` | `motion` | `motion` (bucketing) or `dense` (uniform) |
 | `--prescreen` | off | enable the two-stage cascade |
@@ -116,6 +116,8 @@ Exit code: `0` clean, `1` NSFW (per `--fail-on`), `2` bad input, `3` backend not
     - `Sampler` - motion bucketing, dense uniform, or suspicion
 
 **Single-pass** (default): extract `max_frames` via motion bucketing, then classify each with one backend.
+
+Decoding is split in two so memory tracks the sample rather than the clip: one pass reads the whole timeline as per-frame metadata (index, timestamp, motion), sampling picks from that, and a second pass fetches pixels for the selected frames only. A 900-frame 640x480 video scans in ~12 MB of frame memory instead of ~444 MB, so long videos are bounded rather than fatal. See [performance](docs/performance.md#memory) for the measurements and what the second pass costs.
 
 **Cascade** (`--prescreen`): a free local model densely soft-screens the whole clip; if any frame scores above `--escalate-threshold` (a deliberately *low* recall gate), the most-suspicious frames are merged into grids and sent to the precise backend, capped at `--max-escalations` calls per file (default 2) so a heavily-flagged clip can never cost more than a single-pass scan. Clean media short-circuits to ~$0 and never hits the expensive backend. Because the soft-screen looks at *content* (not motion), it won't discard a unique suspicious frame the way motion bucketing can, and it fails *open*: a decode/inference error escalates rather than silently clearing.
 

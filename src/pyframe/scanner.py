@@ -6,7 +6,14 @@ from .backends import Backend, load_backend
 from .config import Config
 from .errors import MediaDecodeError
 from .image_utils import merge_to_grid
-from .media import MediaKind, iter_frames, iter_frames_from_bytes, media_kind
+from .media import (
+    MediaKind,
+    iter_frame_meta,
+    iter_frame_meta_from_bytes,
+    iter_frames_at,
+    iter_frames_from_bytes_at,
+    media_kind,
+)
 from .results import ScanResult, Severity, Verdict
 from .sampling import (
     DenseUniformSampler,
@@ -40,6 +47,10 @@ class Scanner:
             raise ValueError(
                 f"max_escalations must be >= 1, got {config.prescreen.max_escalations}"
             )
+        # Same trap on the single-pass side: the samplers read a non-positive budget as
+        # "keep everything", which would materialise the whole clip.
+        if config.max_frames < 1:
+            raise ValueError(f"max_frames must be >= 1, got {config.max_frames}")
 
         precise = load_backend(config.backend, model=config.model, region=config.region)
         screen = None
@@ -50,46 +61,59 @@ class Scanner:
     def scan(self, source) -> ScanResult:
         start = time.perf_counter()
         kind = media_kind(source)
-        frames = list(iter_frames(source))
-        return self._scan_frames(str(source), kind, frames, start)
+        # Pass one holds the whole timeline as metadata; pixels are fetched later, and
+        # only for the frames sampling actually selects.
+        metas = list(iter_frame_meta(source))
+
+        def fetch(selected):
+            return iter_frames_at(source, selected)
+
+        return self._scan_frames(str(source), kind, metas, fetch, start)
 
     def scan_bytes(self, data, *, label: str = "<bytes>") -> ScanResult:
         """Scan a GIF/image decoded from memory, no disk touched."""
         start = time.perf_counter()
-        frames = list(iter_frames_from_bytes(data))
-        kind = MediaKind.ANIMATION if len(frames) > 1 else MediaKind.IMAGE
-        return self._scan_frames(label, kind, frames, start)
+        metas = list(iter_frame_meta_from_bytes(data))
+        kind = MediaKind.ANIMATION if len(metas) > 1 else MediaKind.IMAGE
 
-    def _scan_frames(self, source, kind, frames, start) -> ScanResult:
+        def fetch(selected):
+            return iter_frames_from_bytes_at(data, selected)
+
+        return self._scan_frames(label, kind, metas, fetch, start)
+
+    def _scan_frames(self, source, kind, metas, fetch, start) -> ScanResult:
         # Nothing to look at is not the same as nothing to find: aggregating zero frames
         # would report a confident "clean" for media no backend ever saw.
-        if not frames:
+        if not metas:
             raise MediaDecodeError(f"decoded 0 frames from {source}")
 
         if kind is MediaKind.IMAGE:
-            verdicts = self.precise.classify_batch(frames, min_confidence=self.min_confidence)
-            return self._aggregate(source, kind, verdicts, [], len(frames), start)
+            verdicts = self.precise.classify_batch(fetch(metas), min_confidence=self.min_confidence)
+            return self._aggregate(source, kind, verdicts, [], len(metas), start)
 
         if self.config.prescreen.enabled and self.screen is not None:
-            return self._cascade(source, kind, frames, start)
-        return self._single_pass(source, kind, frames, start)
+            return self._cascade(source, kind, metas, fetch, start)
+        return self._single_pass(source, kind, metas, fetch, start)
 
-    def _single_pass(self, source, kind, frames, start) -> ScanResult:
+    def _single_pass(self, source, kind, metas, fetch, start) -> ScanResult:
         cfg = self.config
         if cfg.sampler == "dense":
-            selected = DenseUniformSampler(cfg.prescreen.screen_fps).select(frames)
+            selected = DenseUniformSampler(cfg.prescreen.screen_fps).select(metas)
             if len(selected) > cfg.max_frames:
                 selected = MotionBucketSampler().select(selected, cfg.max_frames)
         else:
-            selected = self._motion_select_with_floor(frames)
+            selected = self._motion_select_with_floor(metas)
 
+        # The only materialisation on this path, and every branch above caps `selected`
+        # at max_frames.
+        frames = list(fetch(selected))
         if cfg.use_merged:
-            verdicts = self._classify_merged(selected)
+            verdicts = self._classify_merged(frames)
         else:
-            verdicts = self.precise.classify_batch(selected, min_confidence=self.min_confidence)
-        return self._aggregate(source, kind, verdicts, [], len(frames), start)
+            verdicts = self.precise.classify_batch(frames, min_confidence=self.min_confidence)
+        return self._aggregate(source, kind, verdicts, [], len(metas), start)
 
-    def _motion_select_with_floor(self, frames):
+    def _motion_select_with_floor(self, metas):
         # Recall floor for the default (motion) sampler. The uniform-by-time sample at
         # screen_fps bounds the sampling stride, so no NSFW event longer than that stride
         # can fall entirely between selected frames. Motion is content-blind (it can keep
@@ -98,7 +122,7 @@ class Scanner:
         # cf. Ding, Sener, and Yao, arXiv:2210.10352 (temporal coverage as a prior, and
         # the decoupling of motion from static semantic content).
         cfg = self.config
-        floor = DenseUniformSampler(cfg.prescreen.screen_fps).select(frames)
+        floor = DenseUniformSampler(cfg.prescreen.screen_fps).select(metas)
         if len(floor) >= cfg.max_frames:
             # The floor already fills the budget; motion only decides what to drop,
             # exactly as the `dense` path trims its own uniform sample.
@@ -107,19 +131,24 @@ class Scanner:
         # the highest-motion frames the floor did not already include.
         have = {f.index for f in floor}
         extra = sorted(
-            (f for f in frames if f.index not in have),
+            (m for m in metas if m.index not in have),
             key=lambda f: f.motion_score,
             reverse=True,
         )
         selected = floor + extra[: cfg.max_frames - len(floor)]
         return sorted(selected, key=lambda f: f.index)
 
-    def _cascade(self, source, kind, frames, start) -> ScanResult:
+    def _cascade(self, source, kind, metas, fetch, start) -> ScanResult:
         cfg = self.config
         pc = cfg.prescreen
 
-        screen_frames = DenseUniformSampler(pc.screen_fps).select(frames)
-        screen_verdicts = self.screen.classify_batch(screen_frames, min_confidence=pc.escalate_threshold)
+        screen_metas = DenseUniformSampler(pc.screen_fps).select(metas)
+        # The screen set is screen_fps x duration, not max_frames, so on a long clip it
+        # is most of the timeline. classify_batch only iterates, so handing it the lazy
+        # fetch keeps one decoded frame alive at a time instead of all of them.
+        screen_verdicts = self.screen.classify_batch(
+            fetch(screen_metas), min_confidence=pc.escalate_threshold
+        )
         scores = {v.frame_index: v.score for v in screen_verdicts}
 
         flagged = [
@@ -129,7 +158,7 @@ class Scanner:
         ]
         if not flagged:
             return self._aggregate(
-                source, kind, [], screen_verdicts, len(frames), start, escalated=False, windows=0
+                source, kind, [], screen_verdicts, len(metas), start, escalated=False, windows=0
             )
 
         # Keep the most-suspicious flagged frames, capped so we make at most
@@ -137,21 +166,22 @@ class Scanner:
         per_batch = max(1, cfg.frames_per_batch)
         frame_budget = pc.max_escalations * per_batch
         flagged_set = set(flagged)
-        flagged_frames = [f for f in frames if f.index in flagged_set]
-        selected = SuspicionSampler().select(flagged_frames, frame_budget, scores)
+        flagged_metas = [m for m in metas if m.index in flagged_set]
+        selected = SuspicionSampler().select(flagged_metas, frame_budget, scores)
         # Always fill at least one full grid (send both even if only one frame flagged).
-        selected = self._ensure_min_frames(selected, frames, scores, per_batch)
+        selected = self._ensure_min_frames(selected, metas, scores, per_batch)
 
-        # Send the top suspicious frames to the precise backend as merged grids.
-        precise = self._classify_merged(selected)
+        # Send the top suspicious frames to the precise backend as merged grids. A third
+        # decode, and only when something flagged: clean media stops after two.
+        precise = self._classify_merged(list(fetch(selected)))
 
-        windows = group_flagged_into_windows(flagged, len(frames), pc.group_gap, pc.window_pad)
+        windows = group_flagged_into_windows(flagged, len(metas), pc.group_gap, pc.window_pad)
         return self._aggregate(
-            source, kind, precise, screen_verdicts, len(frames), start,
+            source, kind, precise, screen_verdicts, len(metas), start,
             escalated=True, windows=len(windows),
         )
 
-    def _ensure_min_frames(self, selected, frames, scores, minimum):
+    def _ensure_min_frames(self, selected, metas, scores, minimum):
         if len(selected) >= minimum:
             return selected
         have = {f.index for f in selected}
@@ -160,7 +190,7 @@ class Scanner:
         # ~1e6 -- so one flat key would rank any moving frame above a screened frame that
         # scored 0.99.
         extra = sorted(
-            (f for f in frames if f.index not in have),
+            (m for m in metas if m.index not in have),
             key=lambda f: (scores.get(f.index, -1.0), f.motion_score),
             reverse=True,
         )
