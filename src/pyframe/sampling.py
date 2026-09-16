@@ -13,15 +13,20 @@ and group flagged frames into temporal windows (group_flagged_into_windows).
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import TypeVar
 
-from .media import Frame
+from .media import FrameLike
+
+# Samplers only read index, timestamp and motion_score, so they work on bare metadata
+# as well as on decoded frames. Binding the element type preserves which one came in.
+F = TypeVar("F", bound=FrameLike)
 
 
 class MotionBucketSampler:
     # Highest-motion frame per equal-width bucket. Lossy/content-blind: cost lever
     # only, never the cascade gate (motion is uncorrelated with NSFW content).
-    def select(self, frames: Sequence[Frame], budget: int) -> list[Frame]:
+    def select(self, frames: Sequence[F], budget: int) -> list[F]:
         n = len(frames)
         if n == 0:
             return []
@@ -29,7 +34,7 @@ class MotionBucketSampler:
             return list(frames)
 
         chunk = n / budget
-        chosen: list[Frame] = []
+        chosen: list[F] = []
         for i in range(budget):
             start = int(i * chunk)
             end = n if i == budget - 1 else int((i + 1) * chunk)
@@ -46,7 +51,7 @@ class DenseUniformSampler:
     def __init__(self, target_fps: float = 2.0):
         self.target_fps = max(target_fps, 0.01)
 
-    def select(self, frames: Sequence[Frame]) -> list[Frame]:
+    def select(self, frames: Sequence[F]) -> list[F]:
         n = len(frames)
         if n <= 1:
             return list(frames)
@@ -57,17 +62,23 @@ class DenseUniformSampler:
 
         source_fps = (n - 1) / duration
         stride = max(1, round(source_fps / self.target_fps))
-        return list(frames[::stride])
+        selected = list(frames[::stride])
+        # A strided slice lands on the last frame only when (n - 1) % stride == 0, so up
+        # to stride-1 frames at the end of every clip would sit outside the floor. An
+        # event that runs to the end of the clip has to stay catchable.
+        if selected[-1].index != frames[-1].index:
+            selected.append(frames[-1])
+        return selected
 
 
 class SuspicionSampler:
     # Keep the most-suspicious frames in a window (screen score, then motion).
     def select(
         self,
-        frames: Sequence[Frame],
+        frames: Sequence[F],
         budget: int,
         scores: Mapping[int, float] | None = None,
-    ) -> list[Frame]:
+    ) -> list[F]:
         n = len(frames)
         if n == 0:
             return []

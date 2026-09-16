@@ -39,8 +39,33 @@ Per-core throughput is the unit that transfers between machines, not a box total
 
 ## Memory
 
-~0.5 GB resident per worker (model weights + buffers). Memory is not the bottleneck for
-this path.
+~0.5 GB resident per worker (model weights + buffers). Decoding adds only the sample, not
+the clip: frames are selected against per-frame metadata first, and pixels are fetched in
+a second pass for the selected frames alone. Peak decode memory is therefore bounded by
+`max_frames` (or by `frames_per_batch * max_escalations` on an escalation), not by the
+length of the media.
+
+Measured on a 900 frame 640x480 clip, `max_frames=10`, backend stubbed:
+
+| | peak RSS | growth over baseline |
+|---|---|---|
+| holding every decoded frame | 504 MB | 444 MB |
+| two pass decode | 82 MB | 12 MB |
+
+The clip holds 829 MB of raw frame data, so the old shape scaled with the file: a 60
+second 1080p30 video is roughly 11 GB and does not complete.
+
+### What the second pass costs
+
+Two sequential decodes instead of one, unconditionally. Unwanted frames are skipped with
+`grab()` rather than `read()`, and a third pass happens only when the cascade escalates,
+so clean media stops at two.
+
+On the same clip that is 3.4s to 6.0s of wall clock, because a stubbed backend makes the
+run purely decode bound. That ratio is the worst case, not the typical one: the per-stage
+table above measures inference at ~91% of a real GIF scan, so a second decode moves a
+much smaller share when a model is actually running. It is the right trade either way,
+since the alternative on a long video is not a faster scan but an exhausted machine.
 
 ## Decode: file path vs in-memory (`scan_bytes`)
 

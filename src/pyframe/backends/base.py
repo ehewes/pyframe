@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Sequence
+from collections.abc import Iterable
 
 from ..media import Frame
 from ..results import Label, Verdict
@@ -53,5 +53,11 @@ class Backend(abc.ABC):
             timestamp=frame.timestamp,
         )
 
-    def classify_batch(self, frames: Sequence[Frame], *, min_confidence: float = 0.8) -> list[Verdict]:
+    def classify_batch(self, frames: Iterable[Frame], *, min_confidence: float = 0.8) -> list[Verdict]:
+        """Score frames in order.
+
+        `frames` may be a lazy iterable that decodes as it is consumed, so an override
+        should iterate it once and not index, len() or retain it. Materialising it puts
+        the whole sample in memory, which on a long video is the thing this avoids.
+        """
         return [self.classify(f, min_confidence=min_confidence) for f in frames]

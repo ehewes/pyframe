@@ -9,7 +9,19 @@ from .errors import (
     UnsupportedMediaError,
 )
 from .image_utils import merge_images_to_grid, merge_to_grid
-from .media import Frame, MediaKind, iter_frames, iter_frames_from_bytes, media_kind
+from .media import (
+    Frame,
+    FrameLike,
+    FrameMeta,
+    MediaKind,
+    iter_frame_meta,
+    iter_frame_meta_from_bytes,
+    iter_frames,
+    iter_frames_at,
+    iter_frames_from_bytes,
+    iter_frames_from_bytes_at,
+    media_kind,
+)
 from .pipe import Pipe, scan, scan_bytes
 from .results import Label, ScanResult, Severity, Verdict
 from .scanner import Scanner
@@ -20,9 +32,9 @@ try:
     try:
         __version__ = version("pyframe-gif-video-image-moderation")
     except PackageNotFoundError:
-        __version__ = "0.4.0"
+        __version__ = "0.5.0"
 except Exception:
-    __version__ = "0.4.0"
+    __version__ = "0.5.0"
 
 __all__ = [
     "Pipe",
@@ -39,9 +51,15 @@ __all__ = [
     "load_backend",
     "clear_backend_cache",
     "Frame",
+    "FrameMeta",
+    "FrameLike",
     "MediaKind",
     "iter_frames",
     "iter_frames_from_bytes",
+    "iter_frame_meta",
+    "iter_frame_meta_from_bytes",
+    "iter_frames_at",
+    "iter_frames_from_bytes_at",
     "media_kind",
     "merge_to_grid",
     "merge_images_to_grid",

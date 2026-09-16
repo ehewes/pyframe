@@ -19,6 +19,34 @@ def test_public_api_surface():
         assert hasattr(pyframe, name), name
 
 
+def test_frame_still_constructs_positionally():
+    # Frame is exported and its field order is public, so the metadata split must not
+    # have reordered or defaulted its way into a breaking constructor.
+    import numpy as np
+
+    import pyframe
+
+    frame = pyframe.Frame(3, 1.5, np.zeros((2, 2, 3), np.uint8))
+
+    assert (frame.index, frame.timestamp, frame.motion_score) == (3, 1.5, 0.0)
+    assert frame.image.shape == (2, 2, 3)
+
+
+def test_two_pass_decode_names_are_exported():
+    import pyframe
+
+    for name in (
+        "FrameMeta",
+        "FrameLike",
+        "iter_frame_meta",
+        "iter_frames_at",
+        "iter_frame_meta_from_bytes",
+        "iter_frames_from_bytes_at",
+    ):
+        assert hasattr(pyframe, name), name
+        assert name in pyframe.__all__, name
+
+
 def test_unsupported_media_raises():
     import pytest
 

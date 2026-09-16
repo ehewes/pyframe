@@ -1,9 +1,11 @@
 import time
 
 import numpy as np
+import pytest
 
 from pyframe.backends.base import Backend
 from pyframe.config import Config, PrescreenConfig
+from pyframe.errors import MediaDecodeError
 from pyframe.media import Frame, MediaKind
 from pyframe.results import Severity
 from pyframe.scanner import Scanner
@@ -33,10 +35,18 @@ def _scanner(precise, screen=None, **prescreen):
     return Scanner(precise, screen=screen, config=cfg)
 
 
+def _fetch(frames):
+    """Stand in for the real two-pass decode: the scanner selects against metadata and
+    then asks for pixels. Frame satisfies FrameLike, so these tests pass the same list
+    as both. Lazy on purpose, to catch anything that indexes or len()s the fetch."""
+    by_index = {f.index: f for f in frames}
+    return lambda selected: (by_index[m.index] for m in selected)
+
+
 def test_single_pass_flags_bright_frame():
     frames = _frames([10] * 9 + [250])
     scanner = _scanner(FakeBackend(cost=0.001))
-    result = scanner._single_pass("clip.gif", MediaKind.ANIMATION, frames, time.perf_counter())
+    result = scanner._single_pass("clip.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
     assert result.is_nsfw
     assert result.verdict is Severity.NSFW
     assert result.cost_usd > 0
@@ -45,7 +55,7 @@ def test_single_pass_flags_bright_frame():
 def test_cascade_short_circuits_clean_media():
     frames = _frames([10] * 20)
     scanner = _scanner(FakeBackend("aws", cost=0.001), screen=FakeBackend("local"), enabled=True)
-    result = scanner._cascade("clip.gif", MediaKind.ANIMATION, frames, time.perf_counter())
+    result = scanner._cascade("clip.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
     assert not result.is_nsfw
     assert result.escalated is False
     assert result.frames_classified == 0
@@ -56,7 +66,7 @@ def test_cascade_escalates_top_suspicious_as_merged():
     frames = _frames([10] * 20)
     frames[12].image[:] = 250  # one suspicious frame
     scanner = _scanner(FakeBackend("aws", cost=0.001), screen=FakeBackend("local"), enabled=True)
-    result = scanner._cascade("clip.gif", MediaKind.ANIMATION, frames, time.perf_counter())
+    result = scanner._cascade("clip.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
     assert result.is_nsfw
     assert result.escalated is True
     assert 0 < result.frames_classified <= 2  # merged grids, capped
@@ -66,7 +76,7 @@ def test_cascade_escalates_top_suspicious_as_merged():
 def test_cascade_caps_aws_calls_at_max_escalations():
     frames = _frames([250] * 40)  # every frame flags
     scanner = _scanner(FakeBackend("aws", 0.001), screen=FakeBackend("local"), enabled=True, max_escalations=2)
-    result = scanner._cascade("c.gif", MediaKind.ANIMATION, frames, time.perf_counter())
+    result = scanner._cascade("c.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
     assert result.escalated is True
     assert result.frames_classified <= 2  # hard cap, regardless of how many frames flag
 
@@ -75,7 +85,7 @@ def test_cascade_pads_to_full_grid_when_one_frame_flagged():
     frames = _frames([10] * 20)
     frames[5].image[:] = 250  # only one suspicious frame
     scanner = _scanner(FakeBackend("aws", 0.001), screen=FakeBackend("local"), enabled=True, max_escalations=1)
-    result = scanner._cascade("c.gif", MediaKind.ANIMATION, frames, time.perf_counter())
+    result = scanner._cascade("c.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
     assert result.escalated is True
     assert result.frames_classified == 1  # one merged grid (the flagged frame plus a neighbor)
     assert result.is_nsfw
@@ -114,8 +124,90 @@ def test_cascade_fail_open_escalates_on_error():
 
     frames = _frames([10] * 12)
     scanner = _scanner(FakeBackend("aws", cost=0.001), screen=BrokenScreen(), enabled=True, fail_open=True)
-    result = scanner._cascade("clip.gif", MediaKind.ANIMATION, frames, time.perf_counter())
+    result = scanner._cascade("clip.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
     assert result.frames_classified > 0  # errors were escalated, not silently cleared
+
+
+def test_all_frames_failing_reports_error_not_clean():
+    class BrokenPrecise(Backend):
+        name = "aws"
+        cost_per_image = 0.001
+
+        def _score(self, image):
+            raise RuntimeError("credentials expired")
+
+    frames = _frames([10] * 6)
+    scanner = _scanner(BrokenPrecise())
+    result = scanner._single_pass("clip.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
+
+    assert result.verdict is Severity.ERROR
+    assert result.is_nsfw is False  # an error is not a positive finding...
+    assert result.max_score == 0.0  # ...but the CLI must not read it as a clean bill either
+
+
+def test_short_circuited_cascade_keeps_is_nsfw_and_verdict_in_lockstep():
+    # escalate_threshold above min_confidence: the screen scores high enough to be NSFW
+    # but not high enough to escalate, so nothing is ever classified. is_nsfw used to be
+    # computed only from the classified frames, so it read False while verdict read nsfw
+    # -- and the CLI gates on is_nsfw.
+    frames = _frames([220] * 10)  # 220/255 = 0.86, over min_confidence 0.8
+    scanner = _scanner(
+        FakeBackend("aws", 0.001), screen=FakeBackend("local"),
+        enabled=True, escalate_threshold=0.95,
+    )
+    result = scanner._cascade("clip.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
+
+    assert result.escalated is False
+    assert result.frames_classified == 0
+    assert result.verdict is Severity.NSFW
+    assert result.is_nsfw is True
+
+
+def test_media_that_decodes_to_nothing_raises_rather_than_reporting_clean():
+    scanner = _scanner(FakeBackend())
+
+    with pytest.raises(MediaDecodeError):
+        scanner._scan_frames("clip.gif", MediaKind.ANIMATION, [], _fetch([]), time.perf_counter())
+
+
+def test_ensure_min_frames_fills_by_suspicion_not_motion():
+    # Screen scores are 0..1 while motion_score is a pixel-diff sum reaching ~1e6, so a
+    # single flat sort key ranked any moving frame above a screened frame that had
+    # nearly flagged.
+    frames = _frames([10] * 3)
+    frames[1].motion_score = 0.0  # screened, scored just under the gate
+    frames[2].motion_score = 1_000_000.0  # never screened, merely busy
+    scores = {0: 0.9, 1: 0.4}
+
+    selected = _scanner(FakeBackend())._ensure_min_frames([frames[0]], frames, scores, 2)
+
+    assert [f.index for f in selected] == [0, 1]
+
+
+def test_max_escalations_below_one_is_rejected():
+    # A non-positive budget does not disable escalation, it uncaps it: SuspicionSampler
+    # returns every frame when budget <= 0.
+    cfg = Config(backend=FakeBackend(), prescreen=PrescreenConfig(enabled=True, max_escalations=0))
+
+    with pytest.raises(ValueError, match="max_escalations"):
+        Scanner.from_config(cfg)
+
+
+def test_max_frames_below_one_is_rejected():
+    # Same trap as max_escalations on the single pass side: the samplers read a
+    # non-positive budget as "keep everything", which would materialise the whole clip.
+    with pytest.raises(ValueError, match="max_frames"):
+        Scanner.from_config(Config(backend=FakeBackend(), max_frames=0))
+
+
+def test_max_escalations_of_one_still_caps_at_one_call():
+    frames = _frames([250] * 40)  # every frame flags
+    scanner = _scanner(
+        FakeBackend("aws", 0.001), screen=FakeBackend("local"), enabled=True, max_escalations=1
+    )
+    result = scanner._cascade("c.gif", MediaKind.ANIMATION, frames, _fetch(frames), time.perf_counter())
+
+    assert result.frames_classified == 1
 
 
 def test_motion_sampler_always_includes_time_coverage_floor():
