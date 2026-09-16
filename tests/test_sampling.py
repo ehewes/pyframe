@@ -30,8 +30,21 @@ def test_motion_bucket_returns_all_when_under_budget():
 def test_dense_sampler_respects_target_fps():
     frames = _frames([0] * 20)  # 20 frames over ~1.9s -> ~10 fps source
     selected = DenseUniformSampler(target_fps=2.0).select(frames)
-    assert len(selected) == 4  # stride 5
-    assert selected[0].index == 0
+    assert [f.index for f in selected] == [0, 5, 10, 15, 19]  # stride 5, plus the tail
+
+
+def test_dense_sampler_always_covers_the_tail():
+    # frames[::stride] stops at 15 here, leaving 16-19 outside the recall floor. An NSFW
+    # event that runs to the end of the clip would have no sampled frame to catch it.
+    frames = _frames([0] * 20)
+    selected = DenseUniformSampler(target_fps=2.0).select(frames)
+    assert selected[-1].index == 19
+
+
+def test_dense_sampler_does_not_duplicate_an_aligned_tail():
+    frames = _frames([0] * 21)  # 21 frames, stride 5 -> 0,5,10,15,20 already ends on 20
+    selected = DenseUniformSampler(target_fps=2.0).select(frames)
+    assert [f.index for f in selected] == [0, 5, 10, 15, 20]
 
 
 def test_dense_sampler_keeps_all_when_no_duration():

@@ -57,7 +57,13 @@ class DenseUniformSampler:
 
         source_fps = (n - 1) / duration
         stride = max(1, round(source_fps / self.target_fps))
-        return list(frames[::stride])
+        selected = list(frames[::stride])
+        # A strided slice lands on the last frame only when (n - 1) % stride == 0, so up
+        # to stride-1 frames at the end of every clip would sit outside the floor. An
+        # event that runs to the end of the clip has to stay catchable.
+        if selected[-1].index != frames[-1].index:
+            selected.append(frames[-1])
+        return selected
 
 
 class SuspicionSampler:
