@@ -68,7 +68,7 @@ A clean image scanned with the local backend:
 | `source` | string | The input path exactly as passed in. |
 | `media_kind` | string | `"image"` or `"animation"` (GIF/video). |
 | `verdict` | string | Overall category: `clean`, `uncertain`, `nsfw`, or `error`. See [Verdict values](#verdict-values). |
-| `is_nsfw` | bool | The authoritative pass/fail: `true` if any classified frame met the NSFW threshold. Branch on this. |
+| `is_nsfw` | bool | The authoritative pass/fail: `true` if and only if `verdict` is `nsfw`. Branch on this. |
 | `max_score` | float | Highest NSFW score (0..1) across the classified frames, rounded to 4 dp. |
 | `worst_frame` | object \| null | The single highest-scoring frame (a [frame object](#frame-object)), or `null` if nothing was classified. |
 | `frames` | array | The [frame objects](#frame-object) that were classified. In a short-circuited clean cascade these are the soft-screen frames. |
@@ -114,7 +114,10 @@ boolean version; `verdict` adds an "uncertain" band:
 | `nsfw` | `max_score >= min_confidence` (threshold default: 0.5 local, 0.8 aws) |
 | `uncertain` | `uncertain_threshold <= max_score < min_confidence` (default `uncertain_threshold` 0.3) |
 | `clean` | `max_score < uncertain_threshold` |
-| `error` | every classified frame failed to score |
+| `error` | every classified frame failed to score (CLI exit `4`) |
+
+Media that decodes to zero frames is not `clean` — it raises `MediaDecodeError` (CLI
+exit `2`), since nothing ever looked at it.
 
 ## Single-pass vs cascade
 
@@ -139,8 +142,15 @@ exit code encodes the outcome so it slots into shell gates:
 |------|---------|
 | `0` | clean |
 | `1` | NSFW (subject to `--fail-on`) |
-| `2` | bad input (unsupported type, decode error, missing file) |
+| `2` | bad input (unsupported type, decode error, missing file, unknown `--backend`, out-of-range option) |
 | `3` | backend not installed (missing optional extra) |
+| `4` | could not classify: every frame failed to score (`verdict` is `error`) |
+
+Code `4` exists so a broken backend can't be mistaken for a clean file. If credentials
+expire or the model fails to load, nothing was ever cleared, so `pyframe upload.gif || reject`
+must reject rather than accept. The reason is printed to stderr. `--fail-on never` still
+exits `0` in every case, including this one — it's the explicit "don't gate me, I only
+want the JSON" escape hatch.
 
 ```bash
 pyframe upload.gif --backend local || echo "rejected"

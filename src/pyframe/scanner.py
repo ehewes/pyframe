@@ -4,6 +4,7 @@ import time
 
 from .backends import Backend, load_backend
 from .config import Config
+from .errors import MediaDecodeError
 from .image_utils import merge_to_grid
 from .media import MediaKind, iter_frames, iter_frames_from_bytes, media_kind
 from .results import ScanResult, Severity, Verdict
@@ -28,6 +29,18 @@ class Scanner:
 
     @classmethod
     def from_config(cls, config: Config) -> "Scanner":
+        # Validate before load_backend: constructing a backend pulls ~0.5 GB of weights,
+        # which is a lot of work to do before rejecting the config.
+        #
+        # A budget below 1 doesn't disable escalation, it removes the cap: the suspicion
+        # sampler treats a non-positive budget as "keep everything", so every flagged
+        # frame would be escalated. Reject it rather than guess which of "never escalate"
+        # or "escalate once" was meant.
+        if config.prescreen.enabled and config.prescreen.max_escalations < 1:
+            raise ValueError(
+                f"max_escalations must be >= 1, got {config.prescreen.max_escalations}"
+            )
+
         precise = load_backend(config.backend, model=config.model, region=config.region)
         screen = None
         if config.prescreen.enabled:
@@ -48,12 +61,14 @@ class Scanner:
         return self._scan_frames(label, kind, frames, start)
 
     def _scan_frames(self, source, kind, frames, start) -> ScanResult:
+        # Nothing to look at is not the same as nothing to find: aggregating zero frames
+        # would report a confident "clean" for media no backend ever saw.
+        if not frames:
+            raise MediaDecodeError(f"decoded 0 frames from {source}")
+
         if kind is MediaKind.IMAGE:
             verdicts = self.precise.classify_batch(frames, min_confidence=self.min_confidence)
             return self._aggregate(source, kind, verdicts, [], len(frames), start)
-
-        if not frames:
-            return self._aggregate(source, kind, [], [], 0, start)
 
         if self.config.prescreen.enabled and self.screen is not None:
             return self._cascade(source, kind, frames, start)
@@ -140,9 +155,13 @@ class Scanner:
         if len(selected) >= minimum:
             return selected
         have = {f.index for f in selected}
+        # Same key as SuspicionSampler: screen score first, motion only as a tiebreak.
+        # These are different units -- scores are 0..1, motion is a pixel-diff sum up to
+        # ~1e6 -- so one flat key would rank any moving frame above a screened frame that
+        # scored 0.99.
         extra = sorted(
             (f for f in frames if f.index not in have),
-            key=lambda f: scores.get(f.index, f.motion_score),
+            key=lambda f: (scores.get(f.index, -1.0), f.motion_score),
             reverse=True,
         )
         if not extra:
@@ -176,9 +195,13 @@ class Scanner:
         worst = max(primary, key=lambda v: v.score) if primary else None
         max_score = worst.score if worst else 0.0
 
-        is_nsfw = any(v.is_nsfw for v in classified)
         errored = bool(primary) and all(v.error for v in primary)
         severity = Severity.from_score(max_score, self.min_confidence, cfg.uncertain_threshold, errored=errored)
+        # Derive is_nsfw from the severity rather than computing it separately, so the
+        # two can't disagree. They used to: a short-circuited cascade scores max_score
+        # off the screen verdicts, which no classified frame ever backed, and the result
+        # could read verdict=nsfw with is_nsfw=False.
+        is_nsfw = severity is Severity.NSFW
 
         cost = len(classified) * self.precise.cost_per_image
         if self.screen is not None:

@@ -89,7 +89,7 @@ pyframe clip.gif --prescreen --backend aws         # cascade: local gate then AW
 pyframe a.gif b.gif c.png --json                   # batch, machine-readable
 ```
 
-Exit code: `0` clean, `1` NSFW (per `--fail-on`), `2` bad input, `3` backend not installed, so it drops straight into a shell gate: `pyframe upload.gif || reject`. Equivalent module form: `python -m pyframe clip.gif`.
+Exit code: `0` clean, `1` NSFW (per `--fail-on`), `2` bad input, `3` backend not installed, `4` could not classify, so it drops straight into a shell gate: `pyframe upload.gif || reject`. A broken backend exits `4` rather than `0` — if nothing scored, nothing was cleared. Equivalent module form: `python -m pyframe clip.gif`.
 
 ### Options
 
@@ -103,7 +103,7 @@ Exit code: `0` clean, `1` NSFW (per `--fail-on`), `2` bad input, `3` backend not
 | `--sampler` | `motion` | `motion` (bucketing) or `dense` (uniform) |
 | `--prescreen` | off | enable the two-stage cascade |
 | `--escalate-threshold` | `0.15` | cascade gate (low = recall-safe) |
-| `--max-escalations` | `2` | hard cap on precise (AWS) calls per file |
+| `--max-escalations` | `2` | hard cap on precise (AWS) calls per file (must be ≥ 1) |
 | `--screen-fps` | `2.0` | soft-screen sample rate |
 | `--use-merged` / `--frames-per-batch` | off / `2` | merge frames into a grid before classifying |
 | `--json` / `--fail-on` | off / `nsfw` | output format / exit-code policy |

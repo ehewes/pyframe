@@ -26,6 +26,14 @@ def _print_human(result: ScanResult) -> None:
         head += ", escalated)" if result.escalated else ", short-circuit clean)"
     print(head)
 
+    if result.verdict is Severity.ERROR:
+        reason = next((f.error for f in result.frames if f.error), None)
+        if reason:
+            # Flush first: stdout is block-buffered when piped but stderr isn't, so
+            # without this the reason lands above the line it explains.
+            sys.stdout.flush()
+            print(f"    could not classify: {reason}", file=sys.stderr)
+
     for frame in result.flagged_frames:
         names = ", ".join(label.name for label in frame.labels) or "flagged"
         print(f"    t={frame.timestamp:.2f}s  {frame.score:.2f}  {names}")
@@ -53,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frames-per-batch", type=int, default=2)
     parser.add_argument("--prescreen", action="store_true", help="enable the two-stage cascade")
     parser.add_argument("--escalate-threshold", type=float, default=0.15, help="cascade gate (low = recall-safe)")
-    parser.add_argument("--max-escalations", type=int, default=2, help="max precise (AWS) calls per file")
+    parser.add_argument("--max-escalations", type=int, default=2, help="max precise (AWS) calls per file (>= 1)")
     parser.add_argument("--screen-fps", type=float, default=2.0, help="soft-screen sample rate")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--fail-on", choices=("nsfw", "uncertain", "never"), default="nsfw")
@@ -90,6 +98,10 @@ def main() -> int:
     except BackendUnavailableError as exc:
         print(exc, file=sys.stderr)
         return 3
+    except ValueError as exc:
+        # Unknown --backend, or an out-of-range knob: bad input, not a missing extra.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     rc = 0
     for path in args.paths:
@@ -105,7 +117,12 @@ def main() -> int:
         else:
             _print_human(result)
 
-        if args.fail_on == "nsfw" and result.is_nsfw:
+        if result.verdict is Severity.ERROR and args.fail_on != "never":
+            # Nothing scored, so nothing was cleared. Exiting 0 here would make
+            # `pyframe upload.gif || reject` accept every upload while the backend is
+            # down. --fail-on never stays the explicit "don't gate me" escape hatch.
+            rc = max(rc, 4)
+        elif args.fail_on == "nsfw" and result.is_nsfw:
             rc = max(rc, 1)
         elif args.fail_on == "uncertain" and result.verdict in (Severity.NSFW, Severity.UNCERTAIN):
             rc = max(rc, 1)
