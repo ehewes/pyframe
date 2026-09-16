@@ -28,6 +28,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Operating System :: OS Independent",
   "Topic :: Multimedia :: Graphics",
   "Topic :: Scientific/Engineering :: Image Recognition",
@@ -65,3 +66,13 @@ only-include = ["src/pyframe", "tests", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+# Ruff's current defaults, pinned explicitly so a future release changing them can't
+# silently widen or narrow what CI enforces. Widening the set (I, UP, B) is worth doing
+# but touches files unrelated to any bug, so it belongs in its own change.
+select = ["E4", "E7", "E9", "F"]
